@@ -77,7 +77,7 @@ function AdminDashboard() {
             {tools.map((t) => (
               <li key={t._id}>
                 <Card className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-sm"><span className="font-medium">{t.name}</span> · {labelize(t.category)} · {t.owner.name}</span>
+                  <span className="text-sm"><span className="font-medium">{t.name}</span> · {labelize(t.category)} · {t.owner.firstName}</span>
                   <div className="flex gap-2">
                     <ActionButton variant="danger" label="Remove" confirm={`Remove "${t.name}"? Active requests will be cancelled.`} action={() => removeTool({ toolId: t._id })} />
                   </div>

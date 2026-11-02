@@ -219,6 +219,25 @@ describe("tool removal notifies borrowers", () => {
   });
 });
 
+describe("owner tool removal notifies borrowers", () => {
+  it("enqueues loan.cancelled (borrower audience) per cancelled request, payload survives deletion", async () => {
+    const t = makeT();
+    const { owner, toolId, loanId } = await seedLoan(t);
+    const other = await signIn(t, "second");
+    const loan2 = await other.as.mutation(api.loans.request, { toolId, startDate: dayOffset(5), endDate: dayOffset(6) });
+    await owner.as.mutation(api.tools.remove, { toolId });
+    const out = await t.run((ctx) => ctx.db.query("outboundEvents").collect());
+    const cancelled = out.filter((o) => o.type === "loan.cancelled");
+    expect(cancelled.map((c) => c.loanId).sort()).toEqual([loanId, loan2].sort());
+    for (const c of cancelled) expect(c).toMatchObject({ audience: "borrower", status: "pending" });
+    expect(await t.run((ctx) => ctx.db.get(toolId))).toBeNull();
+    const data = await t.query(internal.notifications.getDeliveryData, { outboundEventId: cancelled[0]._id });
+    expect(data?.payload.tool.name).toBe(newTool.name);
+    expect(data?.payload.recipient.email).toMatch(/^(borrower|second)/);
+    expect(data?.payload.recipient.email).not.toMatch(/^owner/);
+  });
+});
+
 describe("redaction", () => {
   it("strips emails and long hex/tokens", () => {
     const out = redactMessage("failed for jane.doe+x@example.com with sig 0123456789abcdef0123456789abcdef01234567 and Abc_def-ghi_jkl-mno_pqr-stu");

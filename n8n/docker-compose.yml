@@ -7,8 +7,9 @@ services:
       - "127.0.0.1:5678:5678"
     env_file: .env
     environment:
-      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
-      NODE_FUNCTION_ALLOW_BUILTIN: crypto
+      # Secrets live in n8n credentials (see entrypoint.sh); Code nodes cannot read env.
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "true"
+      N8N_CUSTOM_EXTENSIONS: /custom
       CODE_ENABLE_STDOUT: "true"
       N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?set N8N_ENCRYPTION_KEY in n8n/.env}
       GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-UTC}
@@ -24,6 +25,7 @@ services:
       - n8n_data:/home/node/.n8n
       - ./workflows:/workflows:ro
       - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./custom:/custom:ro
     entrypoint: ["tini", "--", "/bin/sh", "/entrypoint.sh"]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5678/healthz || exit 1"]

@@ -24,14 +24,34 @@
     },
     {
       "parameters": {
-        "jsCode": "const crypto = require('crypto');\nfunction sign(secret, body) {\n  const t = Math.floor(Date.now() / 1000);\n  const v1 = crypto.createHmac('sha256', secret).update(t + '.' + body).digest('hex');\n  return 't=' + t + ',v1=' + v1;\n}\nfunction maskEmail(e) {\n  const [l, d] = String(e || '').split('@');\n  return l && d ? l[0] + '***@' + d : '***';\n}\nfunction logEvent(level, event, fields) {\n  // Reaches docker logs because CODE_ENABLE_STDOUT=true (set in docker-compose.yml).\n  console.log(JSON.stringify({ level, event, ts: new Date().toISOString(), ...fields }));\n}\nconst TOLERANCE_SEC = 300;\nconst item = $input.first();\nconst headers = item.json.headers || {};\nconst staticData = $getWorkflowStaticData('global');\n\nfunction reject(reason, httpCode = 401) {\n  logEvent('warn', 'webhook.rejected', { reason });\n  return [{ json: { status: 'invalid', httpCode, reason } }];\n}\n\nconst secret = $env.LENDLOOP_WEBHOOK_SECRET;\nif (!secret) return reject('not_configured', 500);\n\n// Raw body bytes exactly as sent (Webhook node option \"Raw Body\").\nlet raw = '';\ntry {\n  raw = (await this.helpers.getBinaryDataBuffer(0, 'data')).toString('utf8');\n} catch (e) {\n  return reject('no_raw_body');\n}\n\nconst header = String(headers['x-lendloop-signature'] || '');\nif (!header) return reject('missing_signature');\nconst m = /^t=(\\d{1,12}),v1=([0-9a-f]{64})$/.exec(header.trim());\nif (!m) return reject('malformed_signature');\nconst t = Number(m[1]);\nconst now = Math.floor(Date.now() / 1000);\nif (Math.abs(now - t) > TOLERANCE_SEC) return reject('timestamp_out_of_window');\n\nconst expected = crypto.createHmac('sha256', secret).update(t + '.' + raw).digest();\nconst given = Buffer.from(m[2], 'hex');\nif (given.length !== expected.length || !crypto.timingSafeEqual(expected, given)) {\n  return reject('signature_mismatch');\n}\n\nlet p;\ntry { p = JSON.parse(raw); } catch (e) { return reject('invalid_json', 400); }\nconst idOk = (s) => typeof s === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(s);\nif (!p || !idOk(p.eventId) || !p.loan || !idOk(p.loan.id) || !p.recipient || typeof p.type !== 'string') {\n  return reject('invalid_payload', 400);\n}\n\n// Replay / duplicate protection: remember the last 500 event ids.\nconst seen = staticData.seenEventIds || [];\nif (seen.includes(p.eventId)) {\n  logEvent('info', 'webhook.duplicate', { eventId: p.eventId });\n  return [{ json: { status: 'duplicate', httpCode: 200, reason: 'duplicate' } }];\n}\nseen.push(p.eventId);\nstaticData.seenEventIds = seen.slice(-500);\n\nreturn [{ json: { status: 'ok', httpCode: 200, payload: p } }];"
+        "operation": "verify",
+        "header": "={{ $json.headers['x-lendloop-signature'] || '' }}"
       },
       "id": "verify-signature",
       "name": "Verify signature",
+      "type": "CUSTOM.lendLoopHmac",
+      "typeVersion": 1,
+      "position": [
+        220,
+        200
+      ],
+      "credentials": {
+        "lendLoopHmacApi": {
+          "id": "llCredWebhook01",
+          "name": "LendLoop webhook secret (Convex to n8n)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "function maskEmail(e) {\n  const [l, d] = String(e || '').split('@');\n  return l && d ? l[0] + '***@' + d : '***';\n}\nfunction logEvent(level, event, fields) {\n  // Reaches docker logs because CODE_ENABLE_STDOUT=true (set in docker-compose.yml).\n  console.log(JSON.stringify({ level, event, ts: new Date().toISOString(), ...fields }));\n}\nconst TOLERANCE_SEC = 300;\nconst staticData = $getWorkflowStaticData('global');\n\nfunction reject(reason, httpCode = 401) {\n  logEvent('warn', 'webhook.rejected', { reason });\n  return [{ json: { status: 'invalid', httpCode, reason } }];\n}\n\nif (!$json.valid) return reject($json.reason);\nconst raw = $json.raw;\n\nlet p;\ntry { p = JSON.parse(raw); } catch (e) { return reject('invalid_json', 400); }\nconst idOk = (s) => typeof s === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(s);\nif (!p || !idOk(p.eventId) || !p.loan || !idOk(p.loan.id) || !p.recipient || typeof p.type !== 'string') {\n  return reject('invalid_payload', 400);\n}\n\n// Replay / duplicate protection: remember the last 500 event ids.\nconst seen = staticData.seenEventIds || [];\nif (seen.includes(p.eventId)) {\n  logEvent('info', 'webhook.duplicate', { eventId: p.eventId });\n  return [{ json: { status: 'duplicate', httpCode: 200, reason: 'duplicate' } }];\n}\nseen.push(p.eventId);\nstaticData.seenEventIds = seen.slice(-500);\n\nreturn [{ json: { status: 'ok', httpCode: 200, payload: p } }];"
+      },
+      "id": "check-payload",
+      "name": "Check payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        220,
+        330,
         200
       ]
     },
@@ -104,7 +124,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const crypto = require('crypto');\nfunction sign(secret, body) {\n  const t = Math.floor(Date.now() / 1000);\n  const v1 = crypto.createHmac('sha256', secret).update(t + '.' + body).digest('hex');\n  return 't=' + t + ',v1=' + v1;\n}\nfunction maskEmail(e) {\n  const [l, d] = String(e || '').split('@');\n  return l && d ? l[0] + '***@' + d : '***';\n}\nfunction logEvent(level, event, fields) {\n  // Reaches docker logs because CODE_ENABLE_STDOUT=true (set in docker-compose.yml).\n  console.log(JSON.stringify({ level, event, ts: new Date().toISOString(), ...fields }));\n}\nconst p = $json.payload;\nconst subjects = {\n  'loan.requested': (p.counterparty.firstName || 'Someone') + ' wants to borrow your ' + p.tool.name,\n  'loan.approved': 'Your request for ' + p.tool.name + ' was approved',\n  'loan.declined': 'Your request for ' + p.tool.name + ' was declined',\n  'loan.returned': p.tool.name + ' was marked as returned',\n  'loan.cancelled': (p.counterparty.firstName || 'Someone') + ' cancelled the request for ' + p.tool.name,\n};\n// Logged mock notifier: nothing is actually sent. Recipient address is masked.\nlogEvent('info', 'mock_notification', {\n  channel: 'mock-log',\n  type: p.type,\n  eventId: p.eventId,\n  loanId: p.loan.id,\n  to: maskEmail(p.recipient.email),\n  firstName: p.recipient.firstName,\n  subject: subjects[p.type] || p.type,\n  dates: p.loan.startDate + ' -> ' + p.loan.endDate,\n});\nreturn [{ json: { eventId: p.eventId, loanId: p.loan.id, channel: 'mock-log', status: 'sent' } }];"
+        "jsCode": "function maskEmail(e) {\n  const [l, d] = String(e || '').split('@');\n  return l && d ? l[0] + '***@' + d : '***';\n}\nfunction logEvent(level, event, fields) {\n  // Reaches docker logs because CODE_ENABLE_STDOUT=true (set in docker-compose.yml).\n  console.log(JSON.stringify({ level, event, ts: new Date().toISOString(), ...fields }));\n}\nconst p = $json.payload;\nconst subjects = {\n  'loan.requested': (p.counterparty.firstName || 'Someone') + ' wants to borrow your ' + p.tool.name,\n  'loan.approved': 'Your request for ' + p.tool.name + ' was approved',\n  'loan.declined': 'Your request for ' + p.tool.name + ' was declined',\n  'loan.returned': p.tool.name + ' was marked as returned',\n  'loan.cancelled': (p.counterparty.firstName || 'Someone') + ' cancelled the request for ' + p.tool.name,\n};\n// Logged mock notifier: nothing is actually sent. Recipient address is masked.\nlogEvent('info', 'mock_notification', {\n  channel: 'mock-log',\n  type: p.type,\n  eventId: p.eventId,\n  loanId: p.loan.id,\n  to: maskEmail(p.recipient.email),\n  firstName: p.recipient.firstName,\n  subject: subjects[p.type] || p.type,\n  dates: p.loan.startDate + ' -> ' + p.loan.endDate,\n});\nreturn [{ json: { eventId: p.eventId, loanId: p.loan.id, channel: 'mock-log', status: 'sent' } }];"
       },
       "id": "mock-notifier",
       "name": "Mock notifier",
@@ -117,10 +137,10 @@
     },
     {
       "parameters": {
-        "jsCode": "const crypto = require('crypto');\nfunction sign(secret, body) {\n  const t = Math.floor(Date.now() / 1000);\n  const v1 = crypto.createHmac('sha256', secret).update(t + '.' + body).digest('hex');\n  return 't=' + t + ',v1=' + v1;\n}\nfunction maskEmail(e) {\n  const [l, d] = String(e || '').split('@');\n  return l && d ? l[0] + '***@' + d : '***';\n}\nfunction logEvent(level, event, fields) {\n  // Reaches docker logs because CODE_ENABLE_STDOUT=true (set in docker-compose.yml).\n  console.log(JSON.stringify({ level, event, ts: new Date().toISOString(), ...fields }));\n}\nconst secret = $env.N8N_INBOUND_SECRET;\nif (!secret) throw new Error('N8N_INBOUND_SECRET not configured');\nconst j = $json;\nconst body = JSON.stringify({\n  idempotencyKey: 'notify:' + j.eventId,\n  eventId: j.eventId,\n  loanId: j.loanId,\n  status: j.status,\n  channel: j.channel,\n});\nreturn [{ json: { body, signature: sign(secret, body) } }];"
+        "jsCode": "const j = $json;\nconst body = JSON.stringify({\n  idempotencyKey: 'notify:' + j.eventId,\n  eventId: j.eventId,\n  loanId: j.loanId,\n  status: j.status,\n  channel: j.channel,\n});\nreturn [{ json: { body } }];"
       },
-      "id": "sign-status",
-      "name": "Sign status",
+      "id": "build-status-body",
+      "name": "Build status body",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -130,8 +150,29 @@
     },
     {
       "parameters": {
+        "operation": "sign",
+        "path": "/n8n/notification-status",
+        "body": "={{ $json.body }}"
+      },
+      "id": "sign-status",
+      "name": "Sign status",
+      "type": "CUSTOM.lendLoopHmac",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        100
+      ],
+      "credentials": {
+        "lendLoopHmacApi": {
+          "id": "llCredInbound01",
+          "name": "LendLoop inbound secret (n8n to Convex)"
+        }
+      }
+    },
+    {
+      "parameters": {
         "method": "POST",
-        "url": "={{ $env.CONVEX_SITE_URL + '/n8n/notification-status' }}",
+        "url": "={{ $json.url }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -154,7 +195,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1320,
+        1540,
         100
       ],
       "retryOnFail": true,
@@ -175,6 +216,17 @@
       ]
     },
     "Verify signature": {
+      "main": [
+        [
+          {
+            "node": "Check payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check payload": {
       "main": [
         [
           {
@@ -215,6 +267,17 @@
       ]
     },
     "Mock notifier": {
+      "main": [
+        [
+          {
+            "node": "Build status body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build status body": {
       "main": [
         [
           {

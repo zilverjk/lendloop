@@ -1,5 +1,7 @@
 // Generates n8n/workflows/*.json from readable Code-node sources.
 // Run: node scripts/build-workflows.mjs   (output is committed; contains no secrets)
+// HMAC secrets live in n8n Credentials (type lendLoopHmacApi, see n8n/custom/n8n-nodes-lendloop),
+// created at container start by n8n/entrypoint.sh. Code nodes never read env or secrets.
 import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,13 +13,25 @@ const IDS = {
   error: "llErrorHandler01",
 };
 
-const SIGN_FN = `const crypto = require('crypto');
-function sign(secret, body) {
-  const t = Math.floor(Date.now() / 1000);
-  const v1 = crypto.createHmac('sha256', secret).update(t + '.' + body).digest('hex');
-  return 't=' + t + ',v1=' + v1;
-}
-function maskEmail(e) {
+// Fixed credential ids; the credentials themselves are imported by entrypoint.sh.
+const CRED = {
+  webhook: { id: "llCredWebhook01", name: "LendLoop webhook secret (Convex to n8n)" },
+  inbound: { id: "llCredInbound01", name: "LendLoop inbound secret (n8n to Convex)" },
+};
+
+const hmac = (name, parameters, position, cred) => ({
+  parameters,
+  id: name.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+  name,
+  type: "CUSTOM.lendLoopHmac",
+  typeVersion: 1,
+  position,
+  credentials: { lendLoopHmacApi: cred },
+});
+const signNode = (name, path, position) =>
+  hmac(name, { operation: "sign", path, body: "={{ $json.body }}" }, position, CRED.inbound);
+
+const SIGN_FN = `function maskEmail(e) {
   const [l, d] = String(e || '').split('@');
   return l && d ? l[0] + '***@' + d : '***';
 }
@@ -38,10 +52,10 @@ const code = (name, jsCode, position, extra = {}, perItem = false) => ({
   ...extra,
 });
 
-const http = (name, method, path, position) => ({
+const http = (name, method, position) => ({
   parameters: {
     method,
-    url: `={{ $env.CONVEX_SITE_URL + '${path}' }}`,
+    url: "={{ $json.url }}",
     sendHeaders: true,
     headerParameters: {
       parameters: [{ name: "X-LendLoop-Signature", value: "={{ $json.signature }}" }],
@@ -83,10 +97,9 @@ const link = (...names) => {
 };
 
 // ---------------------------------------------------------------- 1. notification
+// Signature verification happens in the LendLoop HMAC node (secret from credential); this node validates the payload.
 const verify = `${SIGN_FN}
 const TOLERANCE_SEC = 300;
-const item = $input.first();
-const headers = item.json.headers || {};
 const staticData = $getWorkflowStaticData('global');
 
 function reject(reason, httpCode = 401) {
@@ -94,30 +107,8 @@ function reject(reason, httpCode = 401) {
   return [{ json: { status: 'invalid', httpCode, reason } }];
 }
 
-const secret = $env.LENDLOOP_WEBHOOK_SECRET;
-if (!secret) return reject('not_configured', 500);
-
-// Raw body bytes exactly as sent (Webhook node option "Raw Body").
-let raw = '';
-try {
-  raw = (await this.helpers.getBinaryDataBuffer(0, 'data')).toString('utf8');
-} catch (e) {
-  return reject('no_raw_body');
-}
-
-const header = String(headers['x-lendloop-signature'] || '');
-if (!header) return reject('missing_signature');
-const m = /^t=(\\d{1,12}),v1=([0-9a-f]{64})$/.exec(header.trim());
-if (!m) return reject('malformed_signature');
-const t = Number(m[1]);
-const now = Math.floor(Date.now() / 1000);
-if (Math.abs(now - t) > TOLERANCE_SEC) return reject('timestamp_out_of_window');
-
-const expected = crypto.createHmac('sha256', secret).update(t + '.' + raw).digest();
-const given = Buffer.from(m[2], 'hex');
-if (given.length !== expected.length || !crypto.timingSafeEqual(expected, given)) {
-  return reject('signature_mismatch');
-}
+if (!$json.valid) return reject($json.reason);
+const raw = $json.raw;
 
 let p;
 try { p = JSON.parse(raw); } catch (e) { return reject('invalid_json', 400); }
@@ -159,10 +150,7 @@ logEvent('info', 'mock_notification', {
 });
 return [{ json: { eventId: p.eventId, loanId: p.loan.id, channel: 'mock-log', status: 'sent' } }];`;
 
-const signNotify = `${SIGN_FN}
-const secret = $env.N8N_INBOUND_SECRET;
-if (!secret) throw new Error('N8N_INBOUND_SECRET not configured');
-const j = $json;
+const signNotify = `const j = $json;
 const body = JSON.stringify({
   idempotencyKey: 'notify:' + j.eventId,
   eventId: j.eventId,
@@ -170,7 +158,7 @@ const body = JSON.stringify({
   status: j.status,
   channel: j.channel,
 });
-return [{ json: { body, signature: sign(secret, body) } }];`;
+return [{ json: { body } }];`;
 
 const notify = workflow(
   IDS.notify,
@@ -190,7 +178,13 @@ const notify = workflow(
       position: [0, 200],
       webhookId: "6b1b7a52-2f4c-4d57-9d0e-1a1f5c1e0a01",
     },
-    code("Verify signature", verify, [220, 200]),
+    hmac(
+      "Verify signature",
+      { operation: "verify", header: "={{ $json.headers['x-lendloop-signature'] || '' }}" },
+      [220, 200],
+      CRED.webhook,
+    ),
+    code("Check payload", verify, [330, 200]),
     {
       parameters: {
         conditions: {
@@ -239,12 +233,12 @@ const notify = workflow(
       position: [660, 320],
     },
     code("Mock notifier", mock, [880, 100]),
-    code("Sign status", signNotify, [1100, 100]),
-    http("Report notification status", "POST", "/n8n/notification-status", [1320, 100]),
+    code("Build status body", signNotify, [1100, 100]),
+    signNode("Sign status", "/n8n/notification-status", [1320, 100]),
+    http("Report notification status", "POST", [1540, 100]),
   ],
   {
-    Webhook: { main: [[{ node: "Verify signature", type: "main", index: 0 }]] },
-    "Verify signature": { main: [[{ node: "Accepted?", type: "main", index: 0 }]] },
+    ...link("Webhook", "Verify signature", "Check payload", "Accepted?"),
     "Accepted?": {
       main: [
         [{ node: "Respond 200", type: "main", index: 0 }],
@@ -252,7 +246,7 @@ const notify = workflow(
       ],
     },
     "Respond 200": { main: [[{ node: "Mock notifier", type: "main", index: 0 }]] },
-    ...link("Mock notifier", "Sign status", "Report notification status"),
+    ...link("Mock notifier", "Build status body", "Sign status", "Report notification status"),
   },
   { errorWorkflow: IDS.error },
 );
@@ -260,33 +254,8 @@ const notify = workflow(
 // ---------------------------------------------------------------- 2. overdue
 // The overdue GET is replay-protected by Convex (a signature can be used once), so every
 // attempt must carry a fresh signature. A plain HTTP node would re-send the same one on
-// retry, hence this Code node signs and calls per attempt. Errors are re-thrown so the
-// error workflow still fires after the last attempt.
-const fetchOverdue = `${SIGN_FN}
-const secret = $env.N8N_INBOUND_SECRET;
-if (!secret) throw new Error('N8N_INBOUND_SECRET not configured');
-const url = $env.CONVEX_SITE_URL + '/n8n/overdue-loans';
-const MAX_ATTEMPTS = 3;
-let lastErr;
-for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-  try {
-    // GET has an empty body: message is "<t>."; new timestamp + signature on every attempt.
-    const res = await this.helpers.httpRequest({
-      method: 'GET',
-      url,
-      headers: { 'X-LendLoop-Signature': sign(secret, '') },
-      json: true,
-      timeout: 10000,
-    });
-    return [{ json: res }];
-  } catch (e) {
-    lastErr = e;
-    logEvent('warn', 'overdue.fetch_failed', { attempt, status: e && (e.httpCode || e.statusCode), message: String((e && e.message) || e).slice(0, 100) });
-    // Backoff >= 2s also guarantees a different timestamp second, hence a different signature.
-    if (attempt < MAX_ATTEMPTS) await new Promise((r) => setTimeout(r, 2000 * attempt));
-  }
-}
-throw lastErr;`;
+// retry, hence the LendLoop HMAC "Signed Request" operation signs and calls per attempt
+// (3 attempts, backoff 2s/4s) and re-throws so the error workflow still fires.
 
 const splitLoans = `${SIGN_FN}
 const loans = ($json.loans || []);
@@ -306,17 +275,14 @@ logEvent('info', 'mock_reminder', {
 });
 return { json: { loanId: l.loanId, date, channel: 'mock-log', status: 'sent' } };`;
 
-const signReminder = `${SIGN_FN}
-const secret = $env.N8N_INBOUND_SECRET;
-if (!secret) throw new Error('N8N_INBOUND_SECRET not configured');
-const j = $json;
+const signReminder = `const j = $json;
 const body = JSON.stringify({
   idempotencyKey: 'reminder:' + j.loanId + ':' + j.date,
   loanId: j.loanId,
   status: j.status,
   channel: j.channel,
 });
-return { json: { body, signature: sign(secret, body) } };`;
+return { json: { body } };`;
 
 const overdue = workflow(
   IDS.overdue,
@@ -338,11 +304,12 @@ const overdue = workflow(
       typeVersion: 1,
       position: [0, 380],
     },
-    code("Fetch overdue loans", fetchOverdue, [220, 200]),
+    hmac("Fetch overdue loans", { operation: "request", path: "/n8n/overdue-loans" }, [220, 200], CRED.inbound),
     code("Split loans", splitLoans, [660, 200]),
     code("Mock reminder", mockReminder, [880, 200], {}, true),
-    code("Sign reminder status", signReminder, [1100, 200], {}, true),
-    http("Report reminder status", "POST", "/n8n/reminder-status", [1320, 200]),
+    code("Build reminder body", signReminder, [1100, 200], {}, true),
+    signNode("Sign reminder status", "/n8n/reminder-status", [1320, 200]),
+    http("Report reminder status", "POST", [1540, 200]),
   ],
   {
     "Daily 09:00": { main: [[{ node: "Fetch overdue loans", type: "main", index: 0 }]] },
@@ -351,6 +318,7 @@ const overdue = workflow(
       "Fetch overdue loans",
       "Split loans",
       "Mock reminder",
+      "Build reminder body",
       "Sign reminder status",
       "Report reminder status",
     ),
@@ -360,7 +328,6 @@ const overdue = workflow(
 
 // ---------------------------------------------------------------- 3. error handler
 const errLog = `${SIGN_FN}
-const secret = $env.N8N_INBOUND_SECRET;
 const e = $json;
 const exec = e.execution || {};
 const wf = e.workflow || {};
@@ -374,14 +341,13 @@ const workflow = String(wf.name || 'unknown').slice(0, 100);
 logEvent('error', 'n8n.workflow_failed', {
   workflow, workflowId: wf.id, executionId, node: exec.lastNodeExecuted, message,
 });
-if (!secret) throw new Error('N8N_INBOUND_SECRET not configured');
 const body = JSON.stringify({
   idempotencyKey: 'fail:' + executionId,
   workflow,
   executionId,
   message: (exec.lastNodeExecuted ? exec.lastNodeExecuted + ': ' : '') + message,
 });
-return [{ json: { body, signature: sign(secret, body) } }];`;
+return [{ json: { body } }];`;
 
 const errorWf = workflow(
   IDS.error,
@@ -395,10 +361,11 @@ const errorWf = workflow(
       typeVersion: 1,
       position: [0, 200],
     },
-    code("Log and sign failure", errLog, [220, 200]),
-    http("Report failure", "POST", "/n8n/automation-failure", [440, 200]),
+    code("Log and build failure", errLog, [220, 200]),
+    signNode("Sign failure", "/n8n/automation-failure", [440, 200]),
+    http("Report failure", "POST", [660, 200]),
   ],
-  link("Error Trigger", "Log and sign failure", "Report failure"),
+  link("Error Trigger", "Log and build failure", "Sign failure", "Report failure"),
 );
 
 const files = {

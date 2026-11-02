@@ -3,6 +3,8 @@ import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { assertToolOwner, canDeleteTool, requireUser } from "./lib/authz";
 import { log } from "./lib/log";
+import { enqueueLoanEvent } from "./notifications";
+import { firstName } from "./lib/payload";
 import { validateDescription, validateToolName } from "./lib/validation";
 import { categoryValidator, conditionValidator } from "./schema";
 
@@ -39,7 +41,7 @@ export const list = query({
           description: t.description,
           isAvailable: t.isAvailable,
           ownerId: t.ownerId,
-          owner: { name: owner?.name ?? "Unknown", trustedLender: owner?.trustedLender ?? false },
+          owner: { firstName: firstName(owner?.name ?? ""), trustedLender: owner?.trustedLender ?? false },
         };
       }),
     );
@@ -143,7 +145,11 @@ export const remove = mutation({
     }
     const now = Date.now();
     for (const l of loans) {
-      if (l.status === "pending") await ctx.db.patch(l._id, { status: "cancelled", updatedAt: now });
+      if (l.status === "pending") {
+        await ctx.db.patch(l._id, { status: "cancelled", updatedAt: now });
+        // Enqueue before deleting the tool: the tool name is snapshotted on the event.
+        await enqueueLoanEvent(ctx, "loan.cancelled", l._id, "borrower");
+      }
     }
     await ctx.db.delete(toolId);
     log.info("tool.deleted", { toolId });

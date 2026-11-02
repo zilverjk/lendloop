@@ -50,7 +50,8 @@ describe("RBAC", () => {
     const { borrower } = await setup(t);
     const rows = await borrower.as.query(api.tools.list, {});
     expect(JSON.stringify(rows)).not.toContain("@example.com");
-    expect(rows[0].owner).toEqual({ name: "owner Person", trustedLender: false });
+    expect(rows[0].owner).toEqual({ firstName: "owner", trustedLender: false });
+    expect(JSON.stringify(rows)).not.toContain("Person");
   });
 
   it("non-owner cannot edit or delete a tool", async () => {

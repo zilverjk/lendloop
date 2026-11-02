@@ -16,10 +16,10 @@
     },
     {
       "parameters": {
-        "jsCode": "const crypto = require('crypto');\nfunction sign(secret, body) {\n  const t = Math.floor(Date.now() / 1000);\n  const v1 = crypto.createHmac('sha256', secret).update(t + '.' + body).digest('hex');\n  return 't=' + t + ',v1=' + v1;\n}\nfunction maskEmail(e) {\n  const [l, d] = String(e || '').split('@');\n  return l && d ? l[0] + '***@' + d : '***';\n}\nfunction logEvent(level, event, fields) {\n  // Reaches docker logs because CODE_ENABLE_STDOUT=true (set in docker-compose.yml).\n  console.log(JSON.stringify({ level, event, ts: new Date().toISOString(), ...fields }));\n}\nconst secret = $env.N8N_INBOUND_SECRET;\nconst e = $json;\nconst exec = e.execution || {};\nconst wf = e.workflow || {};\n// Redact before logging or storing: emails and long hex/token-like strings.\nconst redact = (s) => String(s)\n  .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}/g, '[email]')\n  .replace(/[A-Za-z0-9_-]{24,}/g, '[token]');\nconst message = redact((exec.error && exec.error.message) || 'unknown error').slice(0, 200);\nconst executionId = String(exec.id || 'unknown').replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64);\nconst workflow = String(wf.name || 'unknown').slice(0, 100);\nlogEvent('error', 'n8n.workflow_failed', {\n  workflow, workflowId: wf.id, executionId, node: exec.lastNodeExecuted, message,\n});\nif (!secret) throw new Error('N8N_INBOUND_SECRET not configured');\nconst body = JSON.stringify({\n  idempotencyKey: 'fail:' + executionId,\n  workflow,\n  executionId,\n  message: (exec.lastNodeExecuted ? exec.lastNodeExecuted + ': ' : '') + message,\n});\nreturn [{ json: { body, signature: sign(secret, body) } }];"
+        "jsCode": "function maskEmail(e) {\n  const [l, d] = String(e || '').split('@');\n  return l && d ? l[0] + '***@' + d : '***';\n}\nfunction logEvent(level, event, fields) {\n  // Reaches docker logs because CODE_ENABLE_STDOUT=true (set in docker-compose.yml).\n  console.log(JSON.stringify({ level, event, ts: new Date().toISOString(), ...fields }));\n}\nconst e = $json;\nconst exec = e.execution || {};\nconst wf = e.workflow || {};\n// Redact before logging or storing: emails and long hex/token-like strings.\nconst redact = (s) => String(s)\n  .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}/g, '[email]')\n  .replace(/[A-Za-z0-9_-]{24,}/g, '[token]');\nconst message = redact((exec.error && exec.error.message) || 'unknown error').slice(0, 200);\nconst executionId = String(exec.id || 'unknown').replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64);\nconst workflow = String(wf.name || 'unknown').slice(0, 100);\nlogEvent('error', 'n8n.workflow_failed', {\n  workflow, workflowId: wf.id, executionId, node: exec.lastNodeExecuted, message,\n});\nconst body = JSON.stringify({\n  idempotencyKey: 'fail:' + executionId,\n  workflow,\n  executionId,\n  message: (exec.lastNodeExecuted ? exec.lastNodeExecuted + ': ' : '') + message,\n});\nreturn [{ json: { body } }];"
       },
-      "id": "log-and-sign-failure",
-      "name": "Log and sign failure",
+      "id": "log-and-build-failure",
+      "name": "Log and build failure",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -29,8 +29,29 @@
     },
     {
       "parameters": {
+        "operation": "sign",
+        "path": "/n8n/automation-failure",
+        "body": "={{ $json.body }}"
+      },
+      "id": "sign-failure",
+      "name": "Sign failure",
+      "type": "CUSTOM.lendLoopHmac",
+      "typeVersion": 1,
+      "position": [
+        440,
+        200
+      ],
+      "credentials": {
+        "lendLoopHmacApi": {
+          "id": "llCredInbound01",
+          "name": "LendLoop inbound secret (n8n to Convex)"
+        }
+      }
+    },
+    {
+      "parameters": {
         "method": "POST",
-        "url": "={{ $env.CONVEX_SITE_URL + '/n8n/automation-failure' }}",
+        "url": "={{ $json.url }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -53,7 +74,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        440,
+        660,
         200
       ],
       "retryOnFail": true,
@@ -66,14 +87,25 @@
       "main": [
         [
           {
-            "node": "Log and sign failure",
+            "node": "Log and build failure",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Log and sign failure": {
+    "Log and build failure": {
+      "main": [
+        [
+          {
+            "node": "Sign failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign failure": {
       "main": [
         [
           {

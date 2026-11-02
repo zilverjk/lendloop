@@ -7,7 +7,7 @@ import { BorrowForm } from "@/components/BorrowForm";
 import { Badge, Card, Empty, Loading, PageTitle, inputClass } from "@/components/ui";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { CATEGORIES, firstName, labelize, type Category } from "@/lib/constants";
+import { CATEGORIES, labelize, type Category } from "@/lib/constants";
 
 export default function ToolsPage() {
   const [category, setCategory] = useState<Category | "">("");
@@ -45,7 +45,7 @@ export default function ToolsPage() {
                       <p className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-600">
                         <Badge>{labelize(t.category)}</Badge>
                         <span>Condition: {labelize(t.condition)}</span>
-                        <span>Owner: {firstName(t.owner.name)}</span>
+                        <span>Owner: {t.owner.firstName}</span>
                         {t.owner.trustedLender && <Badge tone="indigo">Trusted Lender</Badge>}
                       </p>
                     </div>

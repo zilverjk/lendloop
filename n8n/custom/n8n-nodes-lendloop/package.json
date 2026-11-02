@@ -1,0 +1,12 @@
+{
+  "name": "n8n-nodes-lendloop",
+  "version": "1.0.0",
+  "description": "LendLoop HMAC signer/verifier node. Holds the secret in an n8n credential so Code nodes never need env access.",
+  "license": "UNLICENSED",
+  "private": true,
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "credentials": ["LendLoopHmacApi.credentials.js"],
+    "nodes": ["LendLoopHmac.node.js"]
+  }
+}
