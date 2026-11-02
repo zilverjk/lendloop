@@ -258,11 +258,35 @@ const notify = workflow(
 );
 
 // ---------------------------------------------------------------- 2. overdue
-const signGet = `${SIGN_FN}
+// The overdue GET is replay-protected by Convex (a signature can be used once), so every
+// attempt must carry a fresh signature. A plain HTTP node would re-send the same one on
+// retry, hence this Code node signs and calls per attempt. Errors are re-thrown so the
+// error workflow still fires after the last attempt.
+const fetchOverdue = `${SIGN_FN}
 const secret = $env.N8N_INBOUND_SECRET;
 if (!secret) throw new Error('N8N_INBOUND_SECRET not configured');
-// GET has an empty body: message is "<t>."
-return [{ json: { signature: sign(secret, '') } }];`;
+const url = $env.CONVEX_SITE_URL + '/n8n/overdue-loans';
+const MAX_ATTEMPTS = 3;
+let lastErr;
+for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+  try {
+    // GET has an empty body: message is "<t>."; new timestamp + signature on every attempt.
+    const res = await this.helpers.httpRequest({
+      method: 'GET',
+      url,
+      headers: { 'X-LendLoop-Signature': sign(secret, '') },
+      json: true,
+      timeout: 10000,
+    });
+    return [{ json: res }];
+  } catch (e) {
+    lastErr = e;
+    logEvent('warn', 'overdue.fetch_failed', { attempt, status: e && (e.httpCode || e.statusCode), message: String((e && e.message) || e).slice(0, 100) });
+    // Backoff >= 2s also guarantees a different timestamp second, hence a different signature.
+    if (attempt < MAX_ATTEMPTS) await new Promise((r) => setTimeout(r, 2000 * attempt));
+  }
+}
+throw lastErr;`;
 
 const splitLoans = `${SIGN_FN}
 const loans = ($json.loans || []);
@@ -314,18 +338,16 @@ const overdue = workflow(
       typeVersion: 1,
       position: [0, 380],
     },
-    code("Sign fetch", signGet, [220, 200]),
-    http("Fetch overdue loans", "GET", "/n8n/overdue-loans", [440, 200]),
+    code("Fetch overdue loans", fetchOverdue, [220, 200]),
     code("Split loans", splitLoans, [660, 200]),
     code("Mock reminder", mockReminder, [880, 200], {}, true),
     code("Sign reminder status", signReminder, [1100, 200], {}, true),
     http("Report reminder status", "POST", "/n8n/reminder-status", [1320, 200]),
   ],
   {
-    "Daily 09:00": { main: [[{ node: "Sign fetch", type: "main", index: 0 }]] },
-    "Manual run": { main: [[{ node: "Sign fetch", type: "main", index: 0 }]] },
+    "Daily 09:00": { main: [[{ node: "Fetch overdue loans", type: "main", index: 0 }]] },
+    "Manual run": { main: [[{ node: "Fetch overdue loans", type: "main", index: 0 }]] },
     ...link(
-      "Sign fetch",
       "Fetch overdue loans",
       "Split loans",
       "Mock reminder",
@@ -342,7 +364,11 @@ const secret = $env.N8N_INBOUND_SECRET;
 const e = $json;
 const exec = e.execution || {};
 const wf = e.workflow || {};
-const message = String((exec.error && exec.error.message) || 'unknown error').slice(0, 200);
+// Redact before logging or storing: emails and long hex/token-like strings.
+const redact = (s) => String(s)
+  .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}/g, '[email]')
+  .replace(/[A-Za-z0-9_-]{24,}/g, '[token]');
+const message = redact((exec.error && exec.error.message) || 'unknown error').slice(0, 200);
 const executionId = String(exec.id || 'unknown').replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64);
 const workflow = String(wf.name || 'unknown').slice(0, 100);
 logEvent('error', 'n8n.workflow_failed', {

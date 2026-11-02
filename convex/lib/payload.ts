@@ -19,6 +19,8 @@ export type LoanEventInput = {
   tool: { name: string };
   owner: { name: string; email: string };
   borrower: { name: string; email: string };
+  /** Overrides the default recipient for the event type. */
+  audience?: "owner" | "borrower";
 };
 
 export type LoanEventPayload = {
@@ -33,7 +35,9 @@ export type LoanEventPayload = {
 
 /** Recipient is the owner for requested/cancelled, the borrower otherwise. */
 export function buildLoanEventPayload(i: LoanEventInput): LoanEventPayload {
-  const toOwner = i.type === "loan.requested" || i.type === "loan.cancelled";
+  const toOwner = i.audience
+    ? i.audience === "owner"
+    : i.type === "loan.requested" || i.type === "loan.cancelled";
   const recipient = toOwner ? i.owner : i.borrower;
   const counterparty = toOwner ? i.borrower : i.owner;
   return {

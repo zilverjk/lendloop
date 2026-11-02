@@ -4,6 +4,7 @@ import { writeAudit } from "./lib/audit";
 import { requireAdmin } from "./lib/authz";
 import { log } from "./lib/log";
 import { recentActivity } from "./loans";
+import { enqueueLoanEvent } from "./notifications";
 import { roleValidator } from "./schema";
 
 /** CLI-only bootstrap: `npx convex run admin:setRole '{"email":"a@b.c","role":"admin"}'`. */
@@ -16,6 +17,7 @@ export const setRole = internalMutation({
       .first();
     if (!user) throw new ConvexError({ code: "NOT_FOUND", message: "No user with that email" });
     await ctx.db.patch(user._id, { role });
+    await writeAudit(ctx, { label: "cli" }, "user.role_set", "user", user._id, { role });
     log.info("admin.role_set", { userId: user._id, role });
     return { userId: user._id, role };
   },
@@ -36,10 +38,15 @@ export const listUsers = query({
   },
 });
 
-export const listAllLoans = query({
+/**
+ * Mutation (not a query) so the audit row is written server-side in the same call:
+ * there is no way to read all loans without leaving a `loan.viewed_all` record.
+ */
+export const listAllLoans = mutation({
   args: {},
   handler: async (ctx) => {
-    await requireAdmin(ctx);
+    const admin = await requireAdmin(ctx);
+    await writeAudit(ctx, admin._id, "loan.viewed_all", "loan", "*");
     const loans = await ctx.db.query("loans").order("desc").take(200);
     return await Promise.all(
       loans.map(async (l) => {
@@ -66,15 +73,6 @@ export const listAllLoans = query({
   },
 });
 
-/** Queries cannot write, so the admin UI calls this once when it opens the all-loans view. */
-export const recordLoansViewed = mutation({
-  args: {},
-  handler: async (ctx) => {
-    const admin = await requireAdmin(ctx);
-    await writeAudit(ctx, admin._id, "loan.viewed_all", "loan", "*");
-  },
-});
-
 export const auditLog = query({
   args: {},
   handler: async (ctx) => {
@@ -88,7 +86,9 @@ export const auditLog = query({
         targetId: r.targetId,
         metadata: r.metadata,
         createdAt: r.createdAt,
-        actorName: (await ctx.db.get(r.actorId))?.name ?? "Unknown",
+        actorName: r.actorId
+          ? ((await ctx.db.get(r.actorId))?.name ?? "Unknown")
+          : (r.actorLabel ?? "system"),
       })),
     );
   },
@@ -110,6 +110,7 @@ export const removeTool = mutation({
       if (l.status === "pending" || l.status === "approved") {
         await ctx.db.patch(l._id, { status: "cancelled", updatedAt: now });
         cancelled++;
+        await enqueueLoanEvent(ctx, "loan.cancelled", l._id, "borrower");
       }
     }
     await ctx.db.delete(toolId);

@@ -22,4 +22,5 @@ export const pruneReplay = internalMutation({
 
 const crons = cronJobs();
 crons.interval("prune webhook replay nonces", { hours: 1 }, internal.crons.pruneReplay, {});
+crons.interval("sweep stuck outbound events", { minutes: 10 }, internal.notifications.sweepStuck, {});
 export default crons;

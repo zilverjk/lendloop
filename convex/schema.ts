@@ -98,7 +98,9 @@ export default defineSchema({
     .index("by_loan", ["loanId"]),
 
   auditLogs: defineTable({
-    actorId: v.id("users"),
+    // Absent for system actions (e.g. CLI bootstrap); actorLabel then names the source.
+    actorId: v.optional(v.id("users")),
+    actorLabel: v.optional(v.string()),
     action: v.string(),
     targetType: v.string(),
     targetId: v.string(),
@@ -126,5 +128,9 @@ export default defineSchema({
     lastError: v.optional(v.string()),
     createdAt: v.number(),
     acknowledgedAt: v.optional(v.number()),
-  }).index("by_eventId", ["eventId"]),
+    // Overrides the default recipient (e.g. admin tool removal notifies the borrower).
+    audience: v.optional(v.union(v.literal("owner"), v.literal("borrower"))),
+  })
+    .index("by_eventId", ["eventId"])
+    .index("by_status_createdAt", ["status", "createdAt"]),
 });

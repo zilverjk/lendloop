@@ -36,45 +36,16 @@
     },
     {
       "parameters": {
-        "jsCode": "const crypto = require('crypto');\nfunction sign(secret, body) {\n  const t = Math.floor(Date.now() / 1000);\n  const v1 = crypto.createHmac('sha256', secret).update(t + '.' + body).digest('hex');\n  return 't=' + t + ',v1=' + v1;\n}\nfunction maskEmail(e) {\n  const [l, d] = String(e || '').split('@');\n  return l && d ? l[0] + '***@' + d : '***';\n}\nfunction logEvent(level, event, fields) {\n  // Reaches docker logs because CODE_ENABLE_STDOUT=true (set in docker-compose.yml).\n  console.log(JSON.stringify({ level, event, ts: new Date().toISOString(), ...fields }));\n}\nconst secret = $env.N8N_INBOUND_SECRET;\nif (!secret) throw new Error('N8N_INBOUND_SECRET not configured');\n// GET has an empty body: message is \"<t>.\"\nreturn [{ json: { signature: sign(secret, '') } }];"
+        "jsCode": "const crypto = require('crypto');\nfunction sign(secret, body) {\n  const t = Math.floor(Date.now() / 1000);\n  const v1 = crypto.createHmac('sha256', secret).update(t + '.' + body).digest('hex');\n  return 't=' + t + ',v1=' + v1;\n}\nfunction maskEmail(e) {\n  const [l, d] = String(e || '').split('@');\n  return l && d ? l[0] + '***@' + d : '***';\n}\nfunction logEvent(level, event, fields) {\n  // Reaches docker logs because CODE_ENABLE_STDOUT=true (set in docker-compose.yml).\n  console.log(JSON.stringify({ level, event, ts: new Date().toISOString(), ...fields }));\n}\nconst secret = $env.N8N_INBOUND_SECRET;\nif (!secret) throw new Error('N8N_INBOUND_SECRET not configured');\nconst url = $env.CONVEX_SITE_URL + '/n8n/overdue-loans';\nconst MAX_ATTEMPTS = 3;\nlet lastErr;\nfor (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {\n  try {\n    // GET has an empty body: message is \"<t>.\"; new timestamp + signature on every attempt.\n    const res = await this.helpers.httpRequest({\n      method: 'GET',\n      url,\n      headers: { 'X-LendLoop-Signature': sign(secret, '') },\n      json: true,\n      timeout: 10000,\n    });\n    return [{ json: res }];\n  } catch (e) {\n    lastErr = e;\n    logEvent('warn', 'overdue.fetch_failed', { attempt, status: e && (e.httpCode || e.statusCode), message: String((e && e.message) || e).slice(0, 100) });\n    // Backoff >= 2s also guarantees a different timestamp second, hence a different signature.\n    if (attempt < MAX_ATTEMPTS) await new Promise((r) => setTimeout(r, 2000 * attempt));\n  }\n}\nthrow lastErr;"
       },
-      "id": "sign-fetch",
-      "name": "Sign fetch",
+      "id": "fetch-overdue-loans",
+      "name": "Fetch overdue loans",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
         220,
         200
       ]
-    },
-    {
-      "parameters": {
-        "method": "GET",
-        "url": "={{ $env.CONVEX_SITE_URL + '/n8n/overdue-loans' }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "X-LendLoop-Signature",
-              "value": "={{ $json.signature }}"
-            }
-          ]
-        },
-        "options": {
-          "timeout": 10000
-        }
-      },
-      "id": "fetch-overdue-loans",
-      "name": "Fetch overdue loans",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        440,
-        200
-      ],
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 2000
     },
     {
       "parameters": {
@@ -156,7 +127,7 @@
       "main": [
         [
           {
-            "node": "Sign fetch",
+            "node": "Fetch overdue loans",
             "type": "main",
             "index": 0
           }
@@ -164,17 +135,6 @@
       ]
     },
     "Manual run": {
-      "main": [
-        [
-          {
-            "node": "Sign fetch",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Sign fetch": {
       "main": [
         [
           {

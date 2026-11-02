@@ -95,11 +95,10 @@ describe("RBAC", () => {
     const t = makeT();
     const { owner, toolId } = await setup(t);
     expect(await codeOf(owner.as.query(api.admin.listUsers, {}))).toBe("FORBIDDEN");
-    expect(await codeOf(owner.as.query(api.admin.listAllLoans, {}))).toBe("FORBIDDEN");
+    expect(await codeOf(owner.as.mutation(api.admin.listAllLoans, {}))).toBe("FORBIDDEN");
     expect(await codeOf(owner.as.query(api.admin.auditLog, {}))).toBe("FORBIDDEN");
     expect(await codeOf(owner.as.mutation(api.admin.removeTool, { toolId }))).toBe("FORBIDDEN");
     expect(await codeOf(owner.as.mutation(api.admin.setTrustedLender, { userId: owner.id, trusted: true }))).toBe("FORBIDDEN");
-    expect(await codeOf(owner.as.mutation(api.admin.recordLoansViewed, {}))).toBe("FORBIDDEN");
   });
 
   it("admin can remove a listing and an audit row is written", async () => {
@@ -109,10 +108,10 @@ describe("RBAC", () => {
     await admin.as.mutation(api.admin.removeTool, { toolId });
     expect(await t.run((ctx) => ctx.db.get(toolId))).toBeNull();
     await admin.as.mutation(api.admin.setTrustedLender, { userId: owner.id, trusted: true });
-    await admin.as.mutation(api.admin.recordLoansViewed, {});
+    await admin.as.mutation(api.admin.listAllLoans, {});
     const log = await admin.as.query(api.admin.auditLog, {});
-    expect(log.map((r) => r.action).sort()).toEqual(["loan.viewed_all", "tool.removed", "user.trusted_set"]);
-    expect(log.every((r) => r.actorName === "boss Person")).toBe(true);
+    expect(log.map((r) => r.action).sort()).toEqual(["loan.viewed_all", "tool.removed", "user.role_set", "user.trusted_set"]);
+    expect(log.filter((r) => r.action !== "user.role_set").every((r) => r.actorName === "boss Person")).toBe(true);
     const users = await admin.as.query(api.admin.listUsers, {});
     expect(users.find((u) => u._id === owner.id)?.trustedLender).toBe(true);
   });

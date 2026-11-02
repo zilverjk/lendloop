@@ -28,6 +28,10 @@ export function friendlyError(err: unknown): string {
         return data.message ?? "That item no longer exists.";
       case "CONFLICT":
         return data.message ?? "That action conflicts with the current state.";
+      case "DUPLICATE_REQUEST":
+        return "You already have a pending request for this tool. Wait for the owner to respond or cancel it first.";
+      case "RATE_LIMITED":
+        return "You have too many pending requests. Wait for some to be answered or cancel one.";
       default:
         return data.message ?? "Something went wrong.";
     }

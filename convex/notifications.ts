@@ -10,7 +10,7 @@ import {
 import { SIGNATURE_HEADER, EVENT_ID_HEADER, signPayload } from "./lib/hmac";
 import { log } from "./lib/log";
 import { buildLoanEventPayload, type OutboundType } from "./lib/payload";
-import { backoffMs, shouldRetry } from "./lib/retry";
+import { MAX_DELIVERY_ATTEMPTS, backoffMs, shouldRetry } from "./lib/retry";
 
 const FETCH_TIMEOUT_MS = 10_000;
 
@@ -19,6 +19,7 @@ export async function enqueueLoanEvent(
   ctx: MutationCtx,
   type: OutboundType,
   loanId: Id<"loans">,
+  audience?: "owner" | "borrower",
 ): Promise<string> {
   const eventId = crypto.randomUUID();
   const outboundEventId = await ctx.db.insert("outboundEvents", {
@@ -28,6 +29,7 @@ export async function enqueueLoanEvent(
     status: "pending",
     attempts: 0,
     createdAt: Date.now(),
+    ...(audience && { audience }),
   });
   await ctx.scheduler.runAfter(0, internal.notifications.deliver, { outboundEventId });
   return eventId;
@@ -56,6 +58,7 @@ export const getDeliveryData = internalQuery({
         tool: { name: tool?.name ?? "a tool" },
         owner,
         borrower,
+        audience: ev.audience,
       }),
     };
   },
@@ -99,6 +102,29 @@ export const recordFailure = internalMutation({
       detail: `delivery failed after ${attempts} attempts`,
     });
     log.error("notification.failed", { eventId: ev.eventId, attempts, lastError });
+  },
+});
+
+export const STUCK_AFTER_MS = 15 * 60_000;
+const SWEEP_BATCH = 50;
+
+/** Re-schedule delivery for outbox rows stuck in "pending" (e.g. a lost scheduled job). */
+export const sweepStuck = internalMutation({
+  args: { nowMs: v.optional(v.number()) },
+  handler: async (ctx, { nowMs }) => {
+    const cutoff = (nowMs ?? Date.now()) - STUCK_AFTER_MS;
+    const stuck = await ctx.db
+      .query("outboundEvents")
+      .withIndex("by_status_createdAt", (q) => q.eq("status", "pending").lt("createdAt", cutoff))
+      .take(SWEEP_BATCH);
+    let rescheduled = 0;
+    for (const ev of stuck) {
+      if (ev.attempts >= MAX_DELIVERY_ATTEMPTS) continue;
+      await ctx.scheduler.runAfter(0, internal.notifications.deliver, { outboundEventId: ev._id });
+      rescheduled++;
+    }
+    if (rescheduled) log.warn("outbox.swept", { rescheduled });
+    return rescheduled;
   },
 });
 

@@ -4,19 +4,20 @@ import { log } from "./log";
 
 export async function writeAudit(
   ctx: MutationCtx,
-  actorId: Id<"users">,
+  actor: Id<"users"> | { label: string },
   action: string,
   targetType: string,
   targetId: string,
   metadata: Record<string, string | number | boolean> = {},
 ): Promise<void> {
+  const actorFields = typeof actor === "string" ? { actorId: actor } : { actorLabel: actor.label };
   await ctx.db.insert("auditLogs", {
-    actorId,
+    ...actorFields,
     action,
     targetType,
     targetId,
     metadata,
     createdAt: Date.now(),
   });
-  log.info("audit", { action, targetType, targetId, actorId });
+  log.info("audit", { action, targetType, targetId, ...actorFields });
 }

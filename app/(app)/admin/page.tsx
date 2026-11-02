@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ActionButton } from "@/components/ActionButton";
 import { ActivityList } from "@/components/ActivityList";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -19,28 +19,41 @@ export default function AdminPage() {
 }
 
 function AdminDashboard() {
-  const loans = useQuery(api.admin.listAllLoans);
   const users = useQuery(api.admin.listUsers);
   const audit = useQuery(api.admin.auditLog);
   const tools = useQuery(api.tools.list, {});
-  const recordViewed = useMutation(api.admin.recordLoansViewed);
+  const listAllLoans = useMutation(api.admin.listAllLoans);
   const removeTool = useMutation(api.admin.removeTool);
   const setTrusted = useMutation(api.admin.setTrustedLender);
 
-  const recorded = useRef(false);
+  // Listing all loans is a mutation: the server writes the audit row as part of the call.
+  const [loans, setLoans] = useState<Awaited<ReturnType<typeof listAllLoans>> | undefined>();
+  const [loansError, setLoansError] = useState(false);
+  const loadLoans = useCallback(async () => {
+    setLoansError(false);
+    try {
+      setLoans(await listAllLoans());
+    } catch {
+      setLoansError(true);
+    }
+  }, [listAllLoans]);
+  const started = useRef(false);
   useEffect(() => {
-    if (recorded.current) return;
-    recorded.current = true;
-    void recordViewed().catch(() => {});
-  }, [recordViewed]);
+    if (started.current) return;
+    started.current = true;
+    void loadLoans();
+  }, [loadLoans]);
 
   return (
     <div className="space-y-10">
       <PageTitle>Admin</PageTitle>
 
       <section aria-labelledby="a-loans">
-        <h2 id="a-loans" className="mb-3 text-lg font-semibold">All loans</h2>
-        {loans === undefined ? <Loading /> : loans.length === 0 ? <Empty>No loans yet.</Empty> : (
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h2 id="a-loans" className="text-lg font-semibold">All loans</h2>
+          <ActionButton label="Refresh" action={loadLoans} />
+        </div>
+        {loansError ? <Empty>Could not load loans. Try Refresh.</Empty> : loans === undefined ? <Loading /> : loans.length === 0 ? <Empty>No loans yet.</Empty> : (
           <ul className="grid gap-3">
             {loans.map((l) => (
               <li key={l._id}>

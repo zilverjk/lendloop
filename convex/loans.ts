@@ -14,6 +14,8 @@ import { log } from "./lib/log";
 import { rangesOverlap, todayIso, validateLoanDates } from "./lib/validation";
 import { enqueueLoanEvent } from "./notifications";
 
+export const MAX_PENDING_PER_BORROWER = 5;
+
 const notFound = (what: string) => new ConvexError({ code: "NOT_FOUND", message: `${what} not found` });
 const conflict = (message: string) => new ConvexError({ code: "CONFLICT", message });
 
@@ -33,6 +35,24 @@ export const request = mutation({
     if (!tool) throw notFound("Tool");
     if (!canBorrow(user, tool)) throw forbidden("You cannot borrow your own tool");
     validateLoanDates(args.startDate, args.endDate, todayIso(Date.now()));
+    const mine = await ctx.db
+      .query("loans")
+      .withIndex("by_borrower", (q) => q.eq("borrowerId", user._id))
+      .order("desc")
+      .take(500);
+    const myPending = mine.filter((l) => l.status === "pending");
+    if (myPending.some((l) => l.toolId === tool._id)) {
+      throw new ConvexError({
+        code: "DUPLICATE_REQUEST",
+        message: "You already have a pending request for this tool",
+      });
+    }
+    if (myPending.length >= MAX_PENDING_PER_BORROWER) {
+      throw new ConvexError({
+        code: "RATE_LIMITED",
+        message: `You can have at most ${MAX_PENDING_PER_BORROWER} pending requests`,
+      });
+    }
     const approved = await approvedLoansFor(ctx, tool._id);
     if (approved.some((l) => rangesOverlap(l, args))) {
       throw conflict("Tool is already booked for those dates");

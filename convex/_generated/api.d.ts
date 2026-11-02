@@ -18,6 +18,7 @@ import type * as lib_authz from "../lib/authz.js";
 import type * as lib_hmac from "../lib/hmac.js";
 import type * as lib_log from "../lib/log.js";
 import type * as lib_payload from "../lib/payload.js";
+import type * as lib_redact from "../lib/redact.js";
 import type * as lib_retry from "../lib/retry.js";
 import type * as lib_validation from "../lib/validation.js";
 import type * as loans from "../loans.js";
@@ -42,6 +43,7 @@ declare const fullApi: ApiFromModules<{
   "lib/hmac": typeof lib_hmac;
   "lib/log": typeof lib_log;
   "lib/payload": typeof lib_payload;
+  "lib/redact": typeof lib_redact;
   "lib/retry": typeof lib_retry;
   "lib/validation": typeof lib_validation;
   loans: typeof loans;

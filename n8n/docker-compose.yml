@@ -4,7 +4,7 @@ services:
     image: n8nio/n8n:2.45.7
     restart: unless-stopped
     ports:
-      - "5678:5678"
+      - "127.0.0.1:5678:5678"
     env_file: .env
     environment:
       N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"

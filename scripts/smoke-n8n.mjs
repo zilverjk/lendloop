@@ -98,14 +98,21 @@ const runOverdue = () =>
     stdio: ["ignore", "pipe", "pipe"],
     maxBuffer: 64 * 1024 * 1024,
   });
-runOverdue();
+const run1Out = runOverdue();
 await sleep(1500);
 let a2 = activity(overdue.loanId);
 check("overdue run #1 created one reminder_sent", count(a2, "reminder_sent") === 1, a2.events.map((e) => e.key).join(","));
-runOverdue();
+const run2Out = runOverdue();
 await sleep(1500);
 a2 = activity(overdue.loanId);
 check("overdue run #2 is idempotent (still one reminder_sent)", count(a2, "reminder_sent") === 1);
+// Same-day dedupe: the already-reminded loan must no longer be listed, and run #2 must not log a reminder for it.
+const siteUrl = (process.env.CONVEX_SITE_URL_LOCAL ?? "http://127.0.0.1:3211");
+const listRes = await fetch(`${siteUrl}/n8n/overdue-loans`, { headers: { "X-LendLoop-Signature": sign(env.N8N_INBOUND_SECRET, "") } });
+const listed = listRes.ok ? (await listRes.json()).loans : null;
+check("overdue endpoint excludes loans already reminded today", !!listed && !listed.some((l) => l.loanId === overdue.loanId), `HTTP ${listRes.status}`);
+const reminded = (out) => out.split("\n").filter((l) => l.includes("mock_reminder") && l.includes(overdue.loanId)).length;
+check("second same-day run sent no new reminder", reminded(run1Out) === 1 && reminded(run2Out) === 0, `run1 mock_reminder=${reminded(run1Out)}, run2=${reminded(run2Out)}`);
 
 // 5. Failure path: valid signature but unknown loan -> Convex 404 -> retries exhausted -> error workflow
 const before = convexRun("devSeed:recentFailures").length;
