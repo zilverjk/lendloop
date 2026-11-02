@@ -12,7 +12,8 @@ LendLoop is a small neighbourhood tool-lending app. Members list tools they own,
 - Borrow requests with a start/end date range (max 30 days, no overlap with approved loans).
 - Owner approves or declines; borrower can cancel a pending request; owner or borrower marks an approved loan returned.
 - **My listings**, **My requests**, **Incoming requests** pages.
-- Admin: remove any listing, view all loans, grant/revoke Trusted Lender, read the audit log.
+- Admin: remove any listing (affected borrowers are notified), view all loans, grant/revoke Trusted Lender, read the audit log.
+- Guardrails: one pending request per borrower per tool (`DUPLICATE_REQUEST`) and at most 5 pending requests per borrower (`RATE_LIMITED`).
 - Automation activity on each loan ("Notification sent 2 hours ago", "Reminder sent 1 day ago", "Automation failed ...").
 
 ## Tech stack
@@ -53,9 +54,13 @@ Secret A is `LENDLOOP_WEBHOOK_SECRET` (Convex to n8n); secret B is `N8N_INBOUND_
 | `webhookReplay` | Seen nonces/idempotency keys for inbound replay protection; pruned after 24 h by an hourly cron. |
 | `auditLogs` | Admin actions: actor, action, target, small metadata. |
 
+### Admin removal
+
+`admin:removeTool` cancels the tool's pending/approved loans and enqueues a `loan.cancelled` event addressed to each borrower (audience override), then deletes the tool and writes a `tool.removed` audit row.
+
 ### Outbox and retry flow
 
-Each loan mutation (`request`, `approve`, `decline`, `cancel`, `markReturned`) inserts an `outboundEvents` row (status `pending`, random UUID `eventId`) in the same transaction as the state change and schedules `notifications.deliver`. `deliver` builds the minimal payload, signs it and POSTs to n8n with a 10 s timeout. A 2xx marks the row `sent`; anything else records the error (first 200 chars) and reschedules with exponential backoff (5 s, 10 s, 20 s, 40 s; capped at 10 min), up to 5 attempts. After that the row is `failed` and an `automation_failed` event is written for the loan so the failure is visible in the UI. Missing config fails immediately (no retries). `sent` means n8n accepted the webhook; `acknowledgedAt` is set later when n8n reports back through `/n8n/notification-status`.
+Each loan mutation (`request`, `approve`, `decline`, `cancel`, `markReturned`) inserts an `outboundEvents` row (status `pending`, random UUID `eventId`) in the same transaction as the state change and schedules `notifications.deliver`. `deliver` builds the minimal payload, signs it and POSTs to n8n with a 10 s timeout. A 2xx marks the row `sent`; anything else records a short error (e.g. `HTTP 500`, first 200 chars) and reschedules with exponential backoff (5 s, 10 s, 20 s, 40 s; capped at 10 min), up to 5 attempts. After that the row is `failed` and an `automation_failed` event is written for the loan so the failure is visible in the UI. Missing config fails immediately (no retries). The row also snapshots the tool name (`toolName`) at enqueue time, so a notification still names the tool if an admin deletes it before delivery. A sweeper cron runs every 10 minutes and re-schedules `pending` rows older than 15 minutes (lost scheduled jobs). `sent` means n8n accepted the webhook; `acknowledgedAt` is set later when n8n reports back through `/n8n/notification-status`.
 
 ### Request-notification flow
 
@@ -88,9 +93,9 @@ sequenceDiagram
 sequenceDiagram
   participant T as n8n schedule (09:00 or manual)
   participant C as Convex HTTP
-  T->>C: GET /n8n/overdue-loans (signed, empty body)
+  T->>C: GET /n8n/overdue-loans (signed per attempt, empty body)
   C->>C: verify HMAC, claim nonce get:<signature>
-  C-->>T: 200 {loans:[{loanId,endDate,daysOverdue,tool,borrower}]}
+  C-->>T: 200 (excludes loans already reminded today; max 200) {loans:[{loanId,endDate,daysOverdue,tool,borrower}]}
   loop each overdue loan
     T->>T: mock reminder (logged, masked address)
     T->>C: POST /n8n/reminder-status {idempotencyKey: reminder:<loanId>:<UTC date>}
@@ -156,7 +161,7 @@ cp n8n/example.env n8n/.env
 cd n8n && docker compose up -d
 ```
 
-n8n is at http://localhost:5678; workflows are imported and published automatically (see [n8n workflows](#n8n-workflows)). Details: [`n8n/README.md`](n8n/README.md).
+n8n is bound to `127.0.0.1:5678` only (not exposed on the LAN): http://localhost:5678; workflows are imported and published automatically (see [n8n workflows](#n8n-workflows)). Details: [`n8n/README.md`](n8n/README.md).
 
 ### 6. Run the app and become admin
 
@@ -164,7 +169,7 @@ n8n is at http://localhost:5678; workflows are imported and published automatica
 pnpm dev                     # http://localhost:3000
 ```
 
-Sign up in the app first (this creates your `users` row via `users.store`), then promote yourself from the CLI. Roles can only be changed this way:
+Sign up in the app first (this creates your `users` row via `users.store`), then promote yourself from the CLI. Roles can only be changed this way (the change is audited with actor `cli`):
 
 ```bash
 npx convex run admin:setRole '{"email":"you@example.com","role":"admin"}'
@@ -194,13 +199,13 @@ It seeds users/tools/loans through `convex/devSeed.ts` (refuses to run unless `A
 | `N8N_INBOUND_SECRET` | Convex **and** n8n | **Yes** | Signs n8n to Convex HTTP calls. Different from the one above. |
 | `N8N_WEBHOOK_URL` | Convex deployment | No | n8n request-notification webhook URL. |
 | `ALLOW_DEV_SEED` | Convex deployment | No | Enables `devSeed:*` functions; dev only. |
-| `APP_BASE_URL` | `.env.example` only (optional) | No | Listed in the template; not read by current code. |
+| `CONVEX_SITE_URL_LOCAL` | smoke test (shell, optional) | No | Overrides the Convex HTTP actions URL used by `scripts/smoke-n8n.mjs`. |
 | `CONVEX_SITE_URL` | n8n (`n8n/.env`) | No | Convex HTTP actions base URL as seen from the container. |
 | `N8N_ENCRYPTION_KEY` | n8n | **Yes** | Encrypts credentials stored by n8n. |
 | `GENERIC_TIMEZONE` | n8n | No | Timezone for the 09:00 schedule (default UTC). |
 | `N8N_DOCKER_SUBNET` | n8n (optional) | No | Pinned Docker subnet, default `172.28.200.0/24`. |
 
-The compose file additionally sets `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`, `NODE_FUNCTION_ALLOW_BUILTIN=crypto` and `CODE_ENABLE_STDOUT=true`.
+The compose file additionally sets `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`, `NODE_FUNCTION_ALLOW_BUILTIN=crypto` and `CODE_ENABLE_STDOUT=true`; do not put them in `.env`. `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` is needed because the workflows' Code nodes read the HMAC secrets from `$env` to sign and verify requests. This is acceptable here because workflows are version-controlled (generated from `scripts/build-workflows.mjs`) and n8n is bound to localhost; in production use n8n credentials or an external secrets manager instead.
 
 ## Scripts and testing
 
@@ -219,7 +224,7 @@ What the test suites cover (`tests/`):
 
 - **Authorization** (`authz`, `convex`): pure decision functions; unauthenticated rejection; non-owner cannot edit/delete/approve; no borrowing own tool; users cannot call admin functions; admin removal writes an audit row; `users.store` never accepts a role; public query exposes only id/name/category.
 - **HMAC** (`hmac`): valid, empty body, tampered body/timestamp, wrong secret, expired, future, missing/malformed headers.
-- **Idempotency and HTTP** (`http`): 401 for bad signature/wrong secret/expired/future; body shape and size validation; 500 when unconfigured; reminder/notification/failure writes are idempotent; GET replay returns 409; replay-nonce pruning.
+- **Idempotency and HTTP** (`http`): 401 for bad signature/wrong secret/expired/future; body shape and size validation; 500 when unconfigured; reminder/notification/failure writes are idempotent; GET replay returns 409; replay-nonce pruning; overdue endpoint excludes already-reminded loans and logs a warning at the 200 cap; failed write-backs upgrade in place.
 - **Delivery** (`deliver`): signed minimal payload, retry with backoff then permanent failure, unconfigured webhook.
 - **Validation** (`validation`): tool name/description, ISO dates, 30-day limit, overlap, strict inbound bodies.
 - **Payload minimization** (`payload`): recipient routing, exact fields, no leaks of descriptions, Clerk ids, full names or the other party's email.
@@ -228,21 +233,22 @@ What the test suites cover (`tests/`):
 ## Security and privacy decisions
 
 - **RBAC in Convex, not the UI.** Every public function calls `requireUser` / `requireAdmin` (`convex/lib/authz.ts`); the Clerk proxy and the hidden Admin page are convenience only. Ownership checks (`assertToolOwner`, `assertLoanParty`, `canDecideLoan`, `canCancel`, `canMarkReturned`) are pure functions, unit-tested. An admin does not gain edit rights on others' tools; the admin path is explicit (`admin:removeTool`).
-- **Roles only via CLI.** `users.store` upserts name/email from the verified identity and never touches `role`. `admin:setRole` is an `internalMutation`, callable only with `npx convex run`.
+- **Roles only via CLI.** `users.store` upserts name/email from the verified identity and never touches `role`. `admin:setRole` is an `internalMutation`, callable only with `npx convex run`, and writes a `user.role_set` audit row with actor `cli`.
 - **HMAC scheme** (`convex/lib/hmac.ts`, Web Crypto). Header `X-LendLoop-Signature: t=<unix seconds>,v1=<hex>`, where `v1 = HMAC-SHA256(secret, "<t>.<raw body>")` (empty body for GET). Timestamps more than 300 s old or in the future are rejected. Comparison is constant-time. The two directions use separate secrets (`LENDLOOP_WEBHOOK_SECRET`, `N8N_INBOUND_SECRET`), so one leak does not allow forging the other direction. Fail closed: a missing secret returns 500 on Convex and the outbound delivery is marked failed; any verification failure returns a generic 401.
 - **Replay protection and idempotency.** Valid signatures are still bounded by the 300 s window; on top of that:
   - `X-LendLoop-Event-Id` / `Idempotency-Key` = outbound `eventId` (UUID); n8n de-duplicates on it (last 500 ids in workflow static data).
   - `notify:<eventId>` for notification status.
   - `reminder:<loanId>:<YYYY-MM-DD>` for reminder status (one per loan per UTC day).
   - `fail:<executionId>` for error-handler reports.
-  - `get:<signature hex>` nonce for `GET /n8n/overdue-loans` (replay returns 409).
+  - `get:<signature hex>` nonce for `GET /n8n/overdue-loans` (replay returns 409). n8n signs and sends this GET in a Code node, so every retry attempt carries a fresh timestamp and signature.
+  - A failed write-back followed by a successful one for the same key is upgraded in place to `sent` (no duplicate row).
   - Duplicate writes return `200 {"ok":true,"duplicate":true}` without a new record. Keys are checked against `automationEvents.by_idempotencyKey`, and also stored in `webhookReplay` (pruned after 24 h).
 - **Data minimization.** The only payload sent to n8n is `eventId`, `type`, `occurredAt`, `loan{id,status,startDate,endDate}`, `tool{name}`, `recipient{email,firstName}`, `counterparty{firstName}`. Excluded: tool description, condition, category, full names, the counterparty's email, Clerk ids, role. The recipient is the owner for `loan.requested`/`loan.cancelled`, the borrower otherwise. The overdue endpoint returns only `loanId`, `endDate`, `daysOverdue`, `tool{name}`, `borrower{email,firstName}`. The public board exposes only id, name, category. Emails are never returned to other users, and n8n logs mask the address.
 - **Secrets handling.** Secrets live in Convex deployment env and in `n8n/.env` (gitignored; only `.env.example` and `n8n/example.env` templates with placeholders are committed). Workflow JSON reads them via `$env` only and is generated by `scripts/build-workflows.mjs`; never re-export from a live instance without scrubbing. `.gitignore` covers `.env*`, `n8n/.env`, and local Convex/n8n data.
-- **Input validation.** Convex `v` validators on all arguments plus `convex/lib/validation.ts`: tool name 2-80 chars, description at most 500, ISO dates, start not in the past, max 30 days, no overlap with approved loans. Inbound n8n bodies are strictly shaped (unknown keys rejected, regex-checked ids/keys/channels, key-to-id consistency) with a 10 KB cap; failure messages are truncated to 300 chars.
+- **Input validation.** Convex `v` validators on all arguments plus `convex/lib/validation.ts`: tool name 2-80 chars, description at most 500, ISO dates, start not in the past, max 30 days, no overlap with approved loans. Inbound n8n bodies are strictly shaped (unknown keys rejected, regex-checked ids/keys/channels, key-to-id consistency) with a 10 KB cap; failure messages reported by n8n are redacted (emails and long token-like strings, `convex/lib/redact.ts`) before storage, then truncated to 300 chars; outbox errors are short fixed strings.
 - **Structured logging with redaction.** `convex/lib/log.ts` emits JSON lines and redacts any key matching email/secret/signature/token/authorization/password/`*key` (except `idempotencyKey`). Logs carry ids, not PII.
-- **Audit log.** Admin actions are recorded in `auditLogs` (`tool.removed`, `user.trusted_set`/`user.trusted_unset`, `loan.viewed_all`) with actor, target and non-PII metadata; the admin page lists the latest 100.
-- **Failure handling.** Outbox with exponential backoff and a 5-attempt cap; all n8n HTTP nodes use `retryOnFail` (3 tries, 2 s apart); an n8n error workflow reports failures to `/n8n/automation-failure`, creating an `automation_failed` event shown on the loan (or in the audit-visible events when no loan is known).
+- **Audit log.** Admin actions are recorded in `auditLogs` (`tool.removed`, `user.trusted_set`/`user.trusted_unset`, `user.role_set` with actor `cli`, `loan.viewed_all`) with actor, target and non-PII metadata; the admin page lists the latest 100. `admin:listAllLoans` is a mutation (not a query) so it writes a `loan.viewed_all` audit row on every load or refresh of the admin page.
+- **Failure handling.** Outbox with exponential backoff, a 5-attempt cap and a 10-minute sweeper cron; all n8n HTTP nodes use `retryOnFail` (3 tries, 2 s apart); an n8n error workflow reports failures to `/n8n/automation-failure`, creating an `automation_failed` event shown on the loan (or in the audit-visible events when no loan is known).
 - **OWASP notes.** Broken access control (A01): server-side authz everywhere, tested. Injection/validation (A03): typed validators, strict parsing, no dynamic queries. Cryptographic failures (A02): HMAC-SHA256, constant-time compare, secrets out of source. Identification/authentication (A07): Clerk-issued JWTs verified by Convex. Logging/monitoring (A09): structured redacted logs, audit log, visible automation failures. SSRF (A10): webhook URL is operator-configured env, not user input. Insecure design: separate secrets per direction, fail-closed.
 
 ## n8n workflows
@@ -263,17 +269,25 @@ To trigger the overdue workflow manually, either open it in the n8n UI (http://l
 cd n8n && docker compose exec -T -e N8N_RUNNERS_BROKER_PORT=5680 n8n n8n execute --id llOverdueRemind1
 ```
 
+## Pending owner actions
+
+The signed-in UI cannot run until the owner provides:
+
+- A Clerk application with its publishable and secret keys (`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`) in `.env.local`.
+- The Clerk **Convex integration** or a JWT template named `convex`.
+- `CLERK_JWT_ISSUER_DOMAIN` set on the Convex deployment (`npx convex env set ...`).
+
+Until then only the public board and the smoke test (`node scripts/smoke-n8n.mjs`) work.
+
 ## Known limitations
 
 - The notifier is a **logged mock**: no email or SMS is sent. Messages appear in `docker compose logs n8n` (addresses masked).
-- `GET /n8n/overdue-loans` uses its signature as a one-time nonce, so a retry that reuses the same signed request after Convex already processed it gets **409**; n8n's retry does not re-sign, so that surfaces via the error handler.
-- Clerk keys (and a Clerk app with the Convex integration) are required to run the signed-in UI. Only the public board and the smoke test work without them.
-- n8n Code-node access to env vars is enabled (`N8N_BLOCK_ENV_ACCESS_IN_NODE=false`, `crypto` allowed) so workflows can compute HMACs; anyone who can edit workflows in n8n can read the secrets.
+- The overdue endpoint returns at most 200 loans per call (a warning `overdue.cap_hit` is logged when hit); the rest are picked up on the next run.
+- n8n Code-node access to env vars is enabled (`N8N_BLOCK_ENV_ACCESS_IN_NODE=false`, `crypto` allowed) so workflows can compute HMACs; anyone who can edit workflows in n8n can read the secrets (see the rationale under Environment variables).
 - `loan.*` webhooks are only de-duplicated by n8n's last-500 in-memory static data; a restart with a cleared volume forgets them (Convex still dedupes the write-back).
-- Admin `removeTool` cancels pending/approved loans without sending notifications. Owner `tools.remove` is blocked only by approved loans and silently cancels pending ones.
+- Owner `tools.remove` is blocked only by approved loans and silently cancels pending ones.
 - Lists are capped (`take(100–500)`), no pagination. Overdue detection is UTC-date based.
 - Single-instance n8n on SQLite with a local Docker volume; no HA.
-- `APP_BASE_URL` is documented in `.env.example` but not used.
 
 ## What I'd change for production
 
@@ -286,4 +300,4 @@ cd n8n && docker compose exec -T -e N8N_RUNNERS_BROKER_PORT=5680 n8n n8n execute
 - Rate limiting on mutations and HTTP endpoints; CSP and other security headers.
 - Playwright e2e tests with Clerk test users; CI pipeline (lint, typecheck, test, build, smoke test with n8n in a service container).
 - A dedicated admin role via Clerk organizations/roles; two-person approval for destructive admin actions.
-- Pagination, notifications for admin removals, and a dead-letter view/replay button for failed outbox events.
+- Pagination and a dead-letter view/replay button for failed outbox events.

@@ -190,6 +190,21 @@ describe("tool removal notifies borrowers", () => {
     expect(cancelled[0]).toMatchObject({ loanId, audience: "borrower", status: "pending" });
   });
 
+  it("snapshots the tool name so the payload survives tool deletion", async () => {
+    const t = makeT();
+    const { toolId } = await seedLoan(t);
+    const toolName = (await t.run((ctx) => ctx.db.get(toolId)))!.name;
+    const admin2 = await makeAdmin(t, "boss3");
+    await admin2.as.mutation(api.admin.removeTool, { toolId });
+    const ev = (await t.run((ctx) => ctx.db.query("outboundEvents").collect())).find(
+      (o) => o.type === "loan.cancelled",
+    )!;
+    expect(ev.toolName).toBe(toolName);
+    expect(await t.run((ctx) => ctx.db.get(toolId))).toBeNull();
+    const data = await t.query(internal.notifications.getDeliveryData, { outboundEventId: ev._id });
+    expect(data?.payload.tool.name).toBe(toolName);
+  });
+
   it("payload audience override targets the borrower and stays minimal", () => {
     const p = buildLoanEventPayload({
       eventId: "e", type: "loan.cancelled", occurredAt: 0,

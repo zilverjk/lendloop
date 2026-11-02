@@ -22,6 +22,9 @@ export async function enqueueLoanEvent(
   audience?: "owner" | "borrower",
 ): Promise<string> {
   const eventId = crypto.randomUUID();
+  // Snapshot the tool name so delivery still works if the tool is deleted first.
+  const loan = await ctx.db.get(loanId);
+  const tool = loan ? await ctx.db.get(loan.toolId) : null;
   const outboundEventId = await ctx.db.insert("outboundEvents", {
     eventId,
     type,
@@ -30,6 +33,7 @@ export async function enqueueLoanEvent(
     attempts: 0,
     createdAt: Date.now(),
     ...(audience && { audience }),
+    ...(tool && { toolName: tool.name }),
   });
   await ctx.scheduler.runAfter(0, internal.notifications.deliver, { outboundEventId });
   return eventId;
@@ -55,7 +59,7 @@ export const getDeliveryData = internalQuery({
         type: ev.type,
         occurredAt: ev.createdAt,
         loan,
-        tool: { name: tool?.name ?? "a tool" },
+        tool: { name: tool?.name ?? ev.toolName ?? "a tool" },
         owner,
         borrower,
         audience: ev.audience,

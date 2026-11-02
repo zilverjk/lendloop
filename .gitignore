@@ -34,7 +34,6 @@ yarn-error.log*
 .env*
 !.env.example
 n8n/.env
-!n8n/.env.example
 
 # convex local backend data
 .convex/
@@ -43,8 +42,6 @@ n8n/.env
 n8n/data/
 n8n/.n8n/
 
-# vercel
-.vercel
 
 # typescript
 *.tsbuildinfo

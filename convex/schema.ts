@@ -130,6 +130,8 @@ export default defineSchema({
     acknowledgedAt: v.optional(v.number()),
     // Overrides the default recipient (e.g. admin tool removal notifies the borrower).
     audience: v.optional(v.union(v.literal("owner"), v.literal("borrower"))),
+    // Tool name snapshot at enqueue time (the tool may be deleted before delivery).
+    toolName: v.optional(v.string()),
   })
     .index("by_eventId", ["eventId"])
     .index("by_status_createdAt", ["status", "createdAt"]),

@@ -1,4 +1,4 @@
-# LendLoop n8n automation. Usage: cp .env.example .env (fill in), docker compose up -d
+# LendLoop n8n automation. Usage: cp example.env .env (fill in), docker compose up -d
 services:
   n8n:
     image: n8nio/n8n:2.45.7
