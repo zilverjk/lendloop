@@ -1,0 +1,93 @@
+{
+  "id": "llErrorHandler01",
+  "name": "LendLoop – Error handler",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nfunction sign(secret, body) {\n  const t = Math.floor(Date.now() / 1000);\n  const v1 = crypto.createHmac('sha256', secret).update(t + '.' + body).digest('hex');\n  return 't=' + t + ',v1=' + v1;\n}\nfunction maskEmail(e) {\n  const [l, d] = String(e || '').split('@');\n  return l && d ? l[0] + '***@' + d : '***';\n}\nfunction logEvent(level, event, fields) {\n  // Reaches docker logs because CODE_ENABLE_STDOUT=true (set in docker-compose.yml).\n  console.log(JSON.stringify({ level, event, ts: new Date().toISOString(), ...fields }));\n}\nconst secret = $env.N8N_INBOUND_SECRET;\nconst e = $json;\nconst exec = e.execution || {};\nconst wf = e.workflow || {};\nconst message = String((exec.error && exec.error.message) || 'unknown error').slice(0, 200);\nconst executionId = String(exec.id || 'unknown').replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64);\nconst workflow = String(wf.name || 'unknown').slice(0, 100);\nlogEvent('error', 'n8n.workflow_failed', {\n  workflow, workflowId: wf.id, executionId, node: exec.lastNodeExecuted, message,\n});\nif (!secret) throw new Error('N8N_INBOUND_SECRET not configured');\nconst body = JSON.stringify({\n  idempotencyKey: 'fail:' + executionId,\n  workflow,\n  executionId,\n  message: (exec.lastNodeExecuted ? exec.lastNodeExecuted + ': ' : '') + message,\n});\nreturn [{ json: { body, signature: sign(secret, body) } }];"
+      },
+      "id": "log-and-sign-failure",
+      "name": "Log and sign failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CONVEX_SITE_URL + '/n8n/automation-failure' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-LendLoop-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "report-failure",
+      "name": "Report failure",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        200
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Log and sign failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log and sign failure": {
+      "main": [
+        [
+          {
+            "node": "Report failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "tags": []
+}

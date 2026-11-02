@@ -1,0 +1,44 @@
+# LendLoop n8n automation. Usage: cp .env.example .env (fill in), docker compose up -d
+services:
+  n8n:
+    image: n8nio/n8n:2.45.7
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    env_file: .env
+    environment:
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      NODE_FUNCTION_ALLOW_BUILTIN: crypto
+      CODE_ENABLE_STDOUT: "true"
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?set N8N_ENCRYPTION_KEY in n8n/.env}
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-UTC}
+      TZ: ${GENERIC_TIMEZONE:-UTC}
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+    networks:
+      - default
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./workflows:/workflows:ro
+      - ./entrypoint.sh:/entrypoint.sh:ro
+    entrypoint: ["tini", "--", "/bin/sh", "/entrypoint.sh"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5678/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+volumes:
+  n8n_data:
+
+# Pin the subnet (override with N8N_DOCKER_SUBNET) so it cannot collide with
+# VPN/corporate routes such as the default 172.x pools.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${N8N_DOCKER_SUBNET:-172.28.200.0/24}

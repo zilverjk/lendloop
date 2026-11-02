@@ -1,0 +1,246 @@
+{
+  "id": "llRequestNotify1",
+  "name": "LendLoop – Request notification",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lendloop/request-notification",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        200
+      ],
+      "webhookId": "6b1b7a52-2f4c-4d57-9d0e-1a1f5c1e0a01"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nfunction sign(secret, body) {\n  const t = Math.floor(Date.now() / 1000);\n  const v1 = crypto.createHmac('sha256', secret).update(t + '.' + body).digest('hex');\n  return 't=' + t + ',v1=' + v1;\n}\nfunction maskEmail(e) {\n  const [l, d] = String(e || '').split('@');\n  return l && d ? l[0] + '***@' + d : '***';\n}\nfunction logEvent(level, event, fields) {\n  // Reaches docker logs because CODE_ENABLE_STDOUT=true (set in docker-compose.yml).\n  console.log(JSON.stringify({ level, event, ts: new Date().toISOString(), ...fields }));\n}\nconst TOLERANCE_SEC = 300;\nconst item = $input.first();\nconst headers = item.json.headers || {};\nconst staticData = $getWorkflowStaticData('global');\n\nfunction reject(reason, httpCode = 401) {\n  logEvent('warn', 'webhook.rejected', { reason });\n  return [{ json: { status: 'invalid', httpCode, reason } }];\n}\n\nconst secret = $env.LENDLOOP_WEBHOOK_SECRET;\nif (!secret) return reject('not_configured', 500);\n\n// Raw body bytes exactly as sent (Webhook node option \"Raw Body\").\nlet raw = '';\ntry {\n  raw = (await this.helpers.getBinaryDataBuffer(0, 'data')).toString('utf8');\n} catch (e) {\n  return reject('no_raw_body');\n}\n\nconst header = String(headers['x-lendloop-signature'] || '');\nif (!header) return reject('missing_signature');\nconst m = /^t=(\\d{1,12}),v1=([0-9a-f]{64})$/.exec(header.trim());\nif (!m) return reject('malformed_signature');\nconst t = Number(m[1]);\nconst now = Math.floor(Date.now() / 1000);\nif (Math.abs(now - t) > TOLERANCE_SEC) return reject('timestamp_out_of_window');\n\nconst expected = crypto.createHmac('sha256', secret).update(t + '.' + raw).digest();\nconst given = Buffer.from(m[2], 'hex');\nif (given.length !== expected.length || !crypto.timingSafeEqual(expected, given)) {\n  return reject('signature_mismatch');\n}\n\nlet p;\ntry { p = JSON.parse(raw); } catch (e) { return reject('invalid_json', 400); }\nconst idOk = (s) => typeof s === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(s);\nif (!p || !idOk(p.eventId) || !p.loan || !idOk(p.loan.id) || !p.recipient || typeof p.type !== 'string') {\n  return reject('invalid_payload', 400);\n}\n\n// Replay / duplicate protection: remember the last 500 event ids.\nconst seen = staticData.seenEventIds || [];\nif (seen.includes(p.eventId)) {\n  logEvent('info', 'webhook.duplicate', { eventId: p.eventId });\n  return [{ json: { status: 'duplicate', httpCode: 200, reason: 'duplicate' } }];\n}\nseen.push(p.eventId);\nstaticData.seenEventIds = seen.slice(-500);\n\nreturn [{ json: { status: 'ok', httpCode: 200, payload: p } }];"
+      },
+      "id": "verify-signature",
+      "name": "Verify signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "is-ok",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "ok",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "valid-signature",
+      "name": "Accepted?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-ok",
+      "name": "Respond 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.status === 'duplicate' ? { ok: true, duplicate: true } : { error: 'unauthorized' } }}",
+        "options": {
+          "responseCode": "={{ $json.httpCode }}"
+        }
+      },
+      "id": "respond-reject",
+      "name": "Respond 401 / duplicate",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nfunction sign(secret, body) {\n  const t = Math.floor(Date.now() / 1000);\n  const v1 = crypto.createHmac('sha256', secret).update(t + '.' + body).digest('hex');\n  return 't=' + t + ',v1=' + v1;\n}\nfunction maskEmail(e) {\n  const [l, d] = String(e || '').split('@');\n  return l && d ? l[0] + '***@' + d : '***';\n}\nfunction logEvent(level, event, fields) {\n  // Reaches docker logs because CODE_ENABLE_STDOUT=true (set in docker-compose.yml).\n  console.log(JSON.stringify({ level, event, ts: new Date().toISOString(), ...fields }));\n}\nconst p = $json.payload;\nconst subjects = {\n  'loan.requested': (p.counterparty.firstName || 'Someone') + ' wants to borrow your ' + p.tool.name,\n  'loan.approved': 'Your request for ' + p.tool.name + ' was approved',\n  'loan.declined': 'Your request for ' + p.tool.name + ' was declined',\n  'loan.returned': p.tool.name + ' was marked as returned',\n  'loan.cancelled': (p.counterparty.firstName || 'Someone') + ' cancelled the request for ' + p.tool.name,\n};\n// Logged mock notifier: nothing is actually sent. Recipient address is masked.\nlogEvent('info', 'mock_notification', {\n  channel: 'mock-log',\n  type: p.type,\n  eventId: p.eventId,\n  loanId: p.loan.id,\n  to: maskEmail(p.recipient.email),\n  firstName: p.recipient.firstName,\n  subject: subjects[p.type] || p.type,\n  dates: p.loan.startDate + ' -> ' + p.loan.endDate,\n});\nreturn [{ json: { eventId: p.eventId, loanId: p.loan.id, channel: 'mock-log', status: 'sent' } }];"
+      },
+      "id": "mock-notifier",
+      "name": "Mock notifier",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nfunction sign(secret, body) {\n  const t = Math.floor(Date.now() / 1000);\n  const v1 = crypto.createHmac('sha256', secret).update(t + '.' + body).digest('hex');\n  return 't=' + t + ',v1=' + v1;\n}\nfunction maskEmail(e) {\n  const [l, d] = String(e || '').split('@');\n  return l && d ? l[0] + '***@' + d : '***';\n}\nfunction logEvent(level, event, fields) {\n  // Reaches docker logs because CODE_ENABLE_STDOUT=true (set in docker-compose.yml).\n  console.log(JSON.stringify({ level, event, ts: new Date().toISOString(), ...fields }));\n}\nconst secret = $env.N8N_INBOUND_SECRET;\nif (!secret) throw new Error('N8N_INBOUND_SECRET not configured');\nconst j = $json;\nconst body = JSON.stringify({\n  idempotencyKey: 'notify:' + j.eventId,\n  eventId: j.eventId,\n  loanId: j.loanId,\n  status: j.status,\n  channel: j.channel,\n});\nreturn [{ json: { body, signature: sign(secret, body) } }];"
+      },
+      "id": "sign-status",
+      "name": "Sign status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CONVEX_SITE_URL + '/n8n/notification-status' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-LendLoop-Signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "report-notification-status",
+      "name": "Report notification status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        100
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify signature": {
+      "main": [
+        [
+          {
+            "node": "Accepted?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Accepted?": {
+      "main": [
+        [
+          {
+            "node": "Respond 200",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401 / duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond 200": {
+      "main": [
+        [
+          {
+            "node": "Mock notifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mock notifier": {
+      "main": [
+        [
+          {
+            "node": "Sign status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign status": {
+      "main": [
+        [
+          {
+            "node": "Report notification status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "llErrorHandler01"
+  },
+  "pinData": {},
+  "tags": []
+}
