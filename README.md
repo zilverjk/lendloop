@@ -190,6 +190,20 @@ node scripts/smoke-n8n.mjs
 
 It seeds users/tools/loans through `convex/devSeed.ts` (refuses to run unless `ALLOW_DEV_SEED=true`) and checks: the Convex to n8n to Convex round trip, rejection of unsigned/tampered/expired/wrong-secret requests, eventId dedupe, overdue idempotency across two runs, and the error workflow. It reads secrets from `n8n/.env` and uses `docker compose exec` to run the overdue workflow. The smoke test does not need Clerk.
 
+The smoke test cleans up after itself: it tracks every tool it seeds and calls `devSeed:cleanup` with those ids in a `finally` block (also on Ctrl+C).
+
+#### Dev seed helpers
+
+All `devSeed:*` functions need `ALLOW_DEV_SEED=true` and only ever touch `devseed|*` users' data:
+
+```bash
+npx convex run devSeed:demo '{}'                      # idempotently add ~9 demo tools for the public board
+npx convex run devSeed:cleanup '{"dryRun":true}'      # preview leftover "Seed drill <timestamp>" tools + their loans/events
+npx convex run devSeed:cleanup '{}'                   # delete them (users are kept); re-run if it reports "more": true
+npx convex run devSeed:cleanup '{"toolIds":["..."]}'  # delete exactly these seeded tools
+```
+
+
 ## Environment variables
 
 | Variable | Lives in | Secret? | Purpose |

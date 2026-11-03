@@ -61,8 +61,31 @@ function payload(eventId, loanId) {
   });
 }
 
+const seededToolIds = [];
+const seed = (args) => {
+  const r = convexRun("devSeed:seedLoan", args);
+  if (r.toolId) seededToolIds.push(r.toolId);
+  return r;
+};
+let cleaned = false;
+function cleanupSeeded() {
+  if (cleaned || seededToolIds.length === 0) return;
+  cleaned = true;
+  try {
+    const r = convexRun("devSeed:cleanup", { toolIds: seededToolIds });
+    console.log(`cleanup: removed ${r.tools} tool(s), ${r.loans} loan(s), ${r.outboundEvents} outbound, ${r.automationEvents} automation, ${r.auditLogs} audit row(s)`);
+  } catch (e) {
+    console.error(`cleanup failed: ${e.message}`);
+  }
+}
+process.on("SIGINT", () => {
+  cleanupSeeded();
+  process.exit(130);
+});
+
+try {
 // 1. Convex -> n8n -> Convex round trip
-const pending = convexRun("devSeed:seedLoan", { scenario: "pending" });
+const pending = seed({ scenario: "pending" });
 const a1 = await waitFor(() => {
   const a = activity(pending.loanId);
   return count(a, "notification_sent") === 1 ? a : null;
@@ -90,7 +113,7 @@ await sleep(2000);
 check("no extra automationEvent after replay", count(activity(pending.loanId), "notification_sent") === 1);
 
 // 4. Overdue reminders, run twice
-const overdue = convexRun("devSeed:seedLoan", { scenario: "overdue", daysOverdue: 3 });
+const overdue = seed({ scenario: "overdue", daysOverdue: 3 });
 const runOverdue = () =>
   execFileSync("docker", ["compose", "exec", "-T", "-e", "N8N_RUNNERS_BROKER_PORT=5680", "n8n", "n8n", "execute", "--id", "llOverdueRemind1"], {
     cwd: join(root, "n8n"),
@@ -124,6 +147,10 @@ const fails = await waitFor(() => {
   return f.length > before ? f : null;
 }, 40000);
 check("error handler recorded an automation_failed event", !!fails, fails ? `${fails[0].key} :: ${fails[0].detail}` : "timeout");
+
+} finally {
+  cleanupSeeded();
+}
 
 const failed = results.filter((x) => !x).length;
 console.log(failed ? `\n${failed} check(s) failed` : "\nAll checks passed");
