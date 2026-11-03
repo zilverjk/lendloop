@@ -7,12 +7,12 @@ type Variant = "primary" | "secondary" | "ghost" | "danger";
 type Size = "sm" | "md" | "lg";
 
 const base =
-  "inline-flex items-center justify-center gap-2 rounded-lg font-medium whitespace-nowrap transition-colors disabled:cursor-not-allowed disabled:opacity-60";
+  "inline-flex items-center justify-center gap-2 rounded-lg font-medium whitespace-nowrap cursor-pointer transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100";
 const variants: Record<Variant, string> = {
   primary: "bg-brand-600 text-white shadow-sm hover:bg-brand-700 active:bg-brand-800",
-  secondary: "border border-line-strong bg-surface text-ink hover:bg-surface-muted",
-  ghost: "text-brand-700 hover:bg-brand-50",
-  danger: "bg-danger-600 text-white shadow-sm hover:bg-danger-700",
+  secondary: "border border-line-strong bg-surface text-ink hover:border-brand-600 hover:bg-surface-muted active:bg-line",
+  ghost: "text-brand-700 hover:bg-brand-50 active:bg-brand-100",
+  danger: "bg-danger-600 text-white shadow-sm hover:bg-danger-700 active:bg-danger-fg",
 };
 const sizes: Record<Size, string> = {
   sm: "min-h-9 px-3 py-1.5 text-sm",
@@ -79,8 +79,8 @@ export function FilterChip({ selected, children, ...props }: { selected: boolean
       type="button"
       {...props}
       aria-pressed={selected}
-      className={`inline-flex min-h-9 items-center rounded-full border px-3.5 py-1 text-sm font-medium transition-colors ${
-        selected ? "border-brand-700 bg-brand-700 text-white" : "border-line-strong bg-surface text-ink hover:bg-surface-muted"
+      className={`inline-flex min-h-9 cursor-pointer items-center rounded-full border px-3.5 py-1 text-sm font-medium transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 ${
+        selected ? "border-brand-700 bg-brand-700 text-white" : "border-line-strong bg-surface text-ink hover:border-brand-600 hover:bg-brand-50"
       }`}
     >
       {children}
