@@ -133,8 +133,11 @@ The anonymous local backend serves the API on `http://127.0.0.1:3210` (write thi
 
 1. Create a Clerk application.
 2. In the Clerk dashboard enable the **Convex integration** (or create a JWT template named `convex`). The Convex auth config expects `applicationID: "convex"`. Without Clerk configured only the public board and the smoke test work.
+   Run `node scripts/clerk-setup.mjs` to create/update that template idempotently (reads `CLERK_SECRET_KEY` from env or `.env.local`, never prints it). Claims: `aud: "convex"`, `name`, `given_name`, `family_name`, `email`, `email_verified`, `nickname`, `picture_url` (Clerk shortcodes such as `{{user.full_name}}`); the app reads `name` and `email`.
 3. Copy the publishable and secret keys into `.env.local` as `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`.
 4. Copy the Frontend API / issuer URL (e.g. `https://your-app.clerk.accounts.dev`) and set it on Convex (next step) as `CLERK_JWT_ISSUER_DOMAIN`.
+
+To make yourself admin, sign in once (this creates your `users` row), then run: `npx convex run admin:setRole '{"email":"you@example.com","role":"admin"}'`.
 
 ### 4. Convex environment variables and shared secrets
 
