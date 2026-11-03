@@ -1,9 +1,10 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
+import { Inbox } from "lucide-react";
 import { ActionButton } from "@/components/ActionButton";
 import { LoanCard } from "@/components/LoanCard";
-import { Empty, Loading, PageTitle } from "@/components/ui";
+import { EmptyState, Loading, PageHeader } from "@/components/ui";
 import { api } from "@/convex/_generated/api";
 
 export default function IncomingPage() {
@@ -13,9 +14,15 @@ export default function IncomingPage() {
   const markReturned = useMutation(api.loans.markReturned);
   return (
     <>
-      <PageTitle>Incoming requests</PageTitle>
-      {loans === undefined ? <Loading /> : loans.length === 0 ? <Empty>No one has requested your tools yet.</Empty> : (
-        <ul className="grid gap-3">
+      <PageHeader title="Incoming requests" description="Neighbors asking to borrow your tools." />
+      {loans === undefined ? (
+        <Loading label="Loading incoming requests…" />
+      ) : loans.length === 0 ? (
+        <EmptyState icon={<Inbox aria-hidden />} title="No requests yet">
+          When someone asks to borrow one of your tools, it will show up here.
+        </EmptyState>
+      ) : (
+        <ul className="grid gap-4">
           {loans.map((l) => (
             <li key={l._id}>
               <LoanCard loan={l} counterpartyLabel="Borrower">

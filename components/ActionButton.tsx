@@ -19,7 +19,8 @@ export function ActionButton({
     <>
       <Button
         variant={variant}
-        disabled={pending}
+        size="sm"
+        loading={pending}
         onClick={() => {
           if (confirm && !window.confirm(confirm)) return;
           void run(action);
@@ -27,7 +28,11 @@ export function ActionButton({
       >
         {pending ? "Working…" : label}
       </Button>
-      {error && <div className="basis-full"><ErrorText message={error} /></div>}
+      {error && (
+        <div className="basis-full">
+          <ErrorText message={error} />
+        </div>
+      )}
     </>
   );
 }

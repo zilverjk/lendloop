@@ -2,7 +2,7 @@
 
 import { useMutation } from "convex/react";
 import { useRouter } from "next/navigation";
-import { PageTitle } from "@/components/ui";
+import { PageHeader } from "@/components/ui";
 import { ToolForm } from "@/components/ToolForm";
 import { api } from "@/convex/_generated/api";
 
@@ -11,7 +11,7 @@ export default function NewToolPage() {
   const router = useRouter();
   return (
     <>
-      <PageTitle>Lend a tool</PageTitle>
+      <PageHeader title="List a tool" description="Share something that is sitting idle. You approve every request." />
       <ToolForm
         submitLabel="Create listing"
         onSubmit={async (v) => {

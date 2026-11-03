@@ -1,26 +1,75 @@
 @import "tailwindcss";
 
+/*
+ * LendLoop design tokens (single light theme).
+ * Contrast (on white unless noted): ink 16.9:1, muted 6.6:1, brand-700 7.1:1,
+ * brand-600 (button bg with white text) 5.5:1, border-strong (inputs) 3.1:1 for UI.
+ */
+@theme {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  --color-brand-50: #f0fdfa;
+  --color-brand-100: #ccfbf1;
+  --color-brand-200: #99f6e4;
+  --color-brand-500: #14b8a6;
+  --color-brand-600: #0f766e;
+  --color-brand-700: #115e59;
+  --color-brand-800: #134e4a;
+
+  --color-canvas: #f6f8f7;
+  --color-surface: #ffffff;
+  --color-surface-muted: #eef2f0;
+  --color-ink: #12211f;
+  --color-muted: #4b5c59;
+  --color-line: #dbe3e0;
+  --color-line-strong: #7a8a86;
+
+  --color-success-bg: #dcfce7;
+  --color-success-fg: #14532d;
+  --color-warning-bg: #fef3c7;
+  --color-warning-fg: #78350f;
+  --color-danger-bg: #fee2e2;
+  --color-danger-fg: #7f1d1d;
+  --color-danger-600: #b91c1c;
+  --color-danger-700: #991b1b;
+  --color-info-bg: #e0f2fe;
+  --color-info-fg: #0c4a6e;
+
+  --radius-card: 0.875rem;
+  --shadow-card: 0 1px 2px rgb(18 33 31 / 0.05), 0 1px 3px rgb(18 33 31 / 0.06);
+  --shadow-pop: 0 8px 24px rgb(18 33 31 / 0.1);
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: light;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  scroll-behavior: smooth;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  line-height: 1.55;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-brand-600);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
