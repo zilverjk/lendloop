@@ -55,7 +55,7 @@ export function ToolForm({
   }
 
   return (
-    <form onSubmit={submit} noValidate className="max-w-xl">
+    <form onSubmit={submit} noValidate>
       <Card className="space-y-5">
         <p className="text-sm text-muted">
           Fields marked <span aria-hidden className="text-danger-600">*</span>

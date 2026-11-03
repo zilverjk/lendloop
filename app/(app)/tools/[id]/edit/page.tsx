@@ -4,6 +4,7 @@ import { useMutation, useQuery } from "convex/react";
 import { Lock, SearchX } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import { SubPageNav } from "@/components/SubPageNav";
 import { ToolForm } from "@/components/ToolForm";
 import { buttonClass, EmptyState, Loading, PageHeader } from "@/components/ui";
 import { api } from "@/convex/_generated/api";
@@ -34,6 +35,7 @@ export default function EditToolPage() {
 
   return (
     <>
+      <SubPageNav />
       <PageHeader title="Edit listing" description="Update the details borrowers see." />
       <ToolForm
         submitLabel="Save changes"

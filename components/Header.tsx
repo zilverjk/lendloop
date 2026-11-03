@@ -7,11 +7,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api } from "@/convex/_generated/api";
+import { activeNavHref } from "@/lib/nav";
 import { buttonClass } from "./ui";
 
-function NavLink({ href, children, mobile = false }: { href: string; children: string; mobile?: boolean }) {
-  const pathname = usePathname();
-  const active = pathname === href || pathname.startsWith(`${href}/`);
+function NavLink({ href, children, active, mobile = false }: { href: string; children: string; active: boolean; mobile?: boolean }) {
   return (
     <Link
       href={href}
@@ -41,6 +40,7 @@ function useNavLinks() {
 function SignedInNav() {
   const links = useNavLinks();
   const pathname = usePathname();
+  const activeHref = activeNavHref(pathname, links);
   // Menu is open only for the path it was opened on, so any route change closes it.
   const [openFor, setOpenFor] = useState<string | null>(null);
   const open = openFor === pathname;
@@ -58,7 +58,7 @@ function SignedInNav() {
     <>
       <nav aria-label="Main" className="hidden items-center gap-1 md:flex">
         {links.map((l) => (
-          <NavLink key={l.href} href={l.href}>
+          <NavLink key={l.href} href={l.href} active={l.href === activeHref}>
             {l.label}
           </NavLink>
         ))}
@@ -85,7 +85,7 @@ function SignedInNav() {
         <ul className="grid gap-1">
           {links.map((l) => (
             <li key={l.href}>
-              <NavLink href={l.href} mobile>
+              <NavLink href={l.href} active={l.href === activeHref} mobile>
                 {l.label}
               </NavLink>
             </li>

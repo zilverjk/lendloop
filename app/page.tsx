@@ -1,4 +1,5 @@
 import { CalendarCheck, HandHeart, ListPlus } from "lucide-react";
+import { AvailableSubtitle } from "@/components/AvailableSubtitle";
 import { HeroCta } from "@/components/HeroCta";
 import { PublicTools } from "@/components/PublicTools";
 
@@ -48,7 +49,7 @@ export default function Home() {
         <h2 id="available-title" className="text-2xl font-semibold tracking-tight">
           Available now
         </h2>
-        <p className="mb-6 mt-1 text-muted">A peek at what neighbors are lending right now.</p>
+        <AvailableSubtitle />
         <PublicTools />
       </section>
     </main>
